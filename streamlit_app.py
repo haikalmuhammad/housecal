@@ -3,35 +3,57 @@ import streamlit as st
 # --- App Title ---
 st.title("House Sustainability Calculator")
 
-st.write("Fill in a few details about your house to get an overview of its sustainability performance.")
+st.write("Fill in the details below to get an overview of your house's sustainability performance.")
 
-# --- SECTION 1: Efficient Use of Resources ---
+# ============================================================
+# 1. Efficient Use of Resources
+# ============================================================
 st.header("1. Efficient Use of Resources")
 
-st.subheader("Energy Efficiency")
-area = st.number_input("Building floor area (m²)", min_value=0.0, step=1.0)
-insulation = st.selectbox("Wall/Roof insulation type", ["None", "Standard", "High-performance"])
-solar = st.radio("Is there a solar PV system installed?", ["Yes", "No"])
+col1, col2 = st.columns(2)
 
-st.subheader("Water Efficiency")
-rainwater = st.radio("Does the house have a rainwater harvesting system?", ["Yes", "No"])
-dual_flush = st.radio("Does the toilet use a dual flush system?", ["Yes", "No"])
+with col1:
+    st.subheader("Energy Efficiency")
+    area = st.number_input("Building floor area (m²)", min_value=0.0, step=1.0)
+    insulation = st.selectbox("Wall/Roof insulation type", ["None", "Standard", "High-performance"])
+    solar = st.radio("Solar PV system installed?", ["Yes", "No"])
 
-# --- SECTION 2: Health & Comfort ---
+with col2:
+    st.subheader("Water Efficiency")
+    rainwater = st.radio("Rainwater harvesting system?", ["Yes", "No"])
+    dual_flush = st.radio("Dual flush toilet?", ["Yes", "No"])
+
+# ============================================================
+# 2. Health & Comfort
+# ============================================================
 st.header("2. Health & Comfort")
 
-double_glazing = st.radio("Are windows double-glazed?", ["Yes", "No"])
-ventilation = st.selectbox("Ventilation type", ["Natural", "Mechanical", "Heat Recovery Ventilation (HRV)"])
-natural_light = st.slider("Percentage of floor area with natural daylight (%)", 0, 100, 50)
+col3, col4 = st.columns(2)
 
-# --- SECTION 3: Liveability ---
+with col3:
+    double_glazing = st.radio("Double-glazed windows?", ["Yes", "No"])
+    ventilation = st.selectbox("Ventilation type", ["Natural", "Mechanical", "Heat Recovery Ventilation (HRV)"])
+
+with col4:
+    natural_light = st.slider("Natural daylight coverage (%)", 0, 100, 50)
+
+# ============================================================
+# 3. Liveability
+# ============================================================
 st.header("3. Liveability")
 
-wheelchair_access = st.radio("Does the house provide wheelchair access (ramp/wide doors)?", ["Yes", "No"])
-waste_sorting = st.radio("Are there recycling or composting facilities available?", ["Yes", "No"])
-distance_transport = st.number_input("Distance to the nearest public transport stop (meters)", min_value=0, step=10)
+col5, col6 = st.columns(2)
 
-# --- SUBMIT SECTION ---
+with col5:
+    wheelchair_access = st.radio("Wheelchair access (ramp/wide doors)?", ["Yes", "No"])
+    waste_sorting = st.radio("Recycling or composting facilities available?", ["Yes", "No"])
+
+with col6:
+    distance_transport = st.number_input("Distance to nearest public transport (m)", min_value=0, step=10)
+
+# ============================================================
+# Calculation
+# ============================================================
 if st.button("Calculate Score"):
 
     # --- Scoring System ---
@@ -50,7 +72,7 @@ if st.button("Calculate Score"):
         ef_score += 4
     if dual_flush == "Yes":
         ef_score += 4
-    ef_score = min(ef_score, 40)  # Cap at 40
+    ef_score = min(ef_score, 40)
 
     # Health & Comfort scoring
     if double_glazing == "Yes":
@@ -59,7 +81,7 @@ if st.button("Calculate Score"):
         hc_score += 6
     elif ventilation == "Mechanical":
         hc_score += 3
-    hc_score += (natural_light / 100) * 6  # up to 6 points for daylight
+    hc_score += (natural_light / 100) * 6
     hc_score = min(hc_score, 30)
 
     # Liveability scoring
@@ -75,10 +97,9 @@ if st.button("Calculate Score"):
         lv_score += 2
     lv_score = min(lv_score, 20)
 
-    # --- Total ---
     total_score = ef_score + hc_score + lv_score
 
-    # --- Rating Level ---
+    # --- Rating ---
     if total_score >= 80:
         rating = "Platinum"
     elif total_score >= 60:
@@ -88,34 +109,46 @@ if st.button("Calculate Score"):
     else:
         rating = "Bronze"
 
-    # --- Display Results ---
-    st.success("Calculation complete!")
-    st.subheader("📊 Summary:")
-    st.write(f"**Efficiency:** {ef_score:.1f}/40")
-    st.write(f"**Health & Comfort:** {hc_score:.1f}/30")
-    st.write(f"**Liveability:** {lv_score:.1f}/20")
-    st.markdown(f"### 🏅 Total Score: **{total_score:.1f}/100** ({rating} Rating)")
+    # ============================================================
+    # Results
+    # ============================================================
+    st.success("Calculation complete")
 
-    # --- Insights ---
-    st.subheader("💡 Suggestions for Improvement")
+    c1, c2, c3 = st.columns(3)
+    with c1:
+        st.metric("Efficiency", f"{ef_score:.1f}/40")
+    with c2:
+        st.metric("Health & Comfort", f"{hc_score:.1f}/30")
+    with c3:
+        st.metric("Liveability", f"{lv_score:.1f}/20")
+
+    st.markdown(f"### Total Score: **{total_score:.1f}/100** ({rating} Rating)")
+
+    # ============================================================
+    # Recommendations
+    # ============================================================
+    st.subheader("Suggestions for Improvement")
+
     suggestions = []
     if solar == "No":
-        suggestions.append("Consider installing a solar PV system to reduce energy use.")
+        suggestions.append("Install a solar PV system to reduce energy use.")
     if rainwater == "No":
-        suggestions.append("Add a rainwater harvesting system for water efficiency.")
+        suggestions.append("Add a rainwater harvesting system for better water efficiency.")
     if ventilation == "Natural":
-        suggestions.append("Mechanical or HRV ventilation can improve indoor comfort.")
+        suggestions.append("Consider mechanical or HRV ventilation for improved indoor air quality.")
     if natural_light < 40:
-        suggestions.append("Increase natural lighting with larger or better-placed windows.")
+        suggestions.append("Increase natural lighting with larger or better-positioned windows.")
     if distance_transport > 800:
-        suggestions.append("Consider improving transport accessibility for residents.")
+        suggestions.append("Improve accessibility to public transport for residents.")
 
     if suggestions:
         for s in suggestions:
             st.write(f"- {s}")
     else:
-        st.write("Your house performs very well across all categories!")
+        st.write("Your house performs well across all categories.")
 
-# --- Footer ---
+# ============================================================
+# Footer
+# ============================================================
 st.write("---")
-st.caption("Prototype v1.0 — Sustainability Calculator (Demo Version)")
+st.caption("Prototype v1.1 — Sustainability Calculator (Demo Version)")
