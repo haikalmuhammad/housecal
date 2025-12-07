@@ -1,15 +1,21 @@
 import streamlit as st
 import pandas as pd
 
+# =========================
+# ENERGY & CLIMATE (NZ-ANCHORED)
+# =========================
 
 # Climate bands: baseline space heating demand (kWh/m²/year)
+# Back-calculated from ~7,000 kWh/yr per dwelling and HEEP end-use shares,
+# then scaled for mild/temperate/cold zones :contentReference[oaicite:0]{index=0}
 Q_HEAT_BASE = {
-    "Mild": 30.0,
-    "Temperate": 50.0,
-    "Cold": 80.0,
+    "Mild": 15.0,       # e.g. northern coastal cities
+    "Temperate": 25.0,  # around national average
+    "Cold": 40.0,       # inland / southern colder zones
 }
 
 # Dwelling type -> facade area factor (A_facade ≈ k * A_floor)
+# Stylised geometry (no single NZ source, just pattern: detached > semi > apartment)
 K_FACADE = {
     "Freestanding house": 1.2,
     "Semi-detached / end unit": 0.9,
@@ -17,6 +23,7 @@ K_FACADE = {
 }
 
 # Window area category -> window-to-wall ratio (WWR)
+# Stylised low/typical/high categories (kept as simple buckets)
 WWR = {
     "Low window area": 0.15,
     "Medium (typical)": 0.25,
@@ -24,17 +31,22 @@ WWR = {
 }
 
 # Wall performance -> U-value (W/m²K)
+# Aligned loosely with H1 / NZ practice:
+# - Uninsulated wall ~1.8
+# - Code-like wall R~1.6 → U≈0.6
+# - Better-than-code wall R~2.5 → U≈0.4 :contentReference[oaicite:1]{index=1}
 U_WALL = {
     "Very poor / uninsulated": 1.8,
-    "Typical NZ Code-like": 0.8,
-    "Improved insulation": 0.5,
+    "Typical NZ Code-like": 0.6,
+    "Improved insulation": 0.4,
 }
 
 # Window type -> U-value (W/m²K)
+# From NZ glazing suppliers: single ~5, standard double ~2.5, low-E+argon ~1.3–1.8 :contentReference[oaicite:2]{index=2}
 U_WINDOW = {
-    "Mostly single glazing": 4.5,
-    "Standard double glazing": 2.8,
-    "High-performance double / Low-E": 1.8,
+    "Mostly single glazing": 5.0,
+    "Standard double glazing": 2.5,
+    "High-performance double / Low-E": 1.5,
 }
 
 # Baseline geometry & U-values for HeatLoss_base (per m² floor) – "typical NZ new house"
@@ -44,37 +56,48 @@ BASELINE_WALL_PERF = "Typical NZ Code-like"
 BASELINE_GLAZING = "Standard double glazing"
 
 # Other loads baseline (lighting + plugs etc.)
+# Stylised: from HEEP, non-heating / non-hot-water uses ≈ half of electricity use → ~25 kWh/m²/yr for a 120m² home :contentReference[oaicite:3]{index=3}
 Q_OTHER_BASE = 25.0  # kWh/m²/year
 
-# Hot water energy per m³ (kWh/m³) – ~40–45 kWh/m³ is reasonable
-E_HW_BASE = 45.0
+# Hot water energy per m³ (kWh/m³)
+# Physics-based: E(kWh) ≈ Volume(L) * ΔT(°C) / 860; for ΔT≈40°C → ~46 kWh/m³ :contentReference[oaicite:4]{index=4}
+E_HW_BASE = 46.0
 
-# Heating system COP
+# Heating system COP (stylised but within NZ ranges)
 COP_HEAT = {
     "None": 0.0,
-    "Portable electric heaters": 0.95,
-    "Panel / convector heaters": 0.95,
-    "Heat pump (split system)": 3.0,
+    "Portable electric heaters": 0.95,      # resistive
+    "Panel / convector heaters": 0.95,      # resistive
+    "Heat pump (split system)": 3.0,        # typical seasonal COP
 }
 
 # Water heating system COP / efficiency
+# HW heat pumps around 3–4; cylinders ~0.9 :contentReference[oaicite:5]{index=5}
 COP_HW = {
     "Electric cylinder": 0.9,
-    "Heat pump water heater": 2.5,
+    "Heat pump water heater": 3.0,
 }
 
-# Heating coverage -> fraction of floor area heated
+# Heating coverage -> fraction of floor area heated (stylised)
 F_COVERAGE = {
     "Only living room": 0.4,
     "Living + some bedrooms": 0.7,
     "Most of the house": 1.0,
 }
 
-# Grid emission factor & tariff (dummy NZ-wide)
-EF_EL = 0.10  # kgCO2/kWh
-P_EL = 0.30   # NZD/kWh
+# Grid emission factor & tariff (NZ)
+# MfE grid factor around 0.12 kgCO2e/kWh in recent factor sets :contentReference[oaicite:6]{index=6}
+EF_EL = 0.12  # kgCO2e/kWh
 
-# Usage assumptions (per person per day, unless noted)
+# Residential electricity prices ~33–35 c/kWh (MBIE, PowerCompare, Insurspy) :contentReference[oaicite:7]{index=7}
+P_EL = 0.34   # NZD/kWh (incl. GST, national average order-of-magnitude)
+
+# =========================
+# WATER USE & FIXTURES (NZ-ANCHORED)
+# =========================
+
+# Usage assumptions (per person per day)
+# Tuned so that total ≈ 160–230 L/person/day, consistent with BRANZ SR469 medians :contentReference[oaicite:8]{index=8}
 U_FIXTURES = {
     "toilet_flushes": 5.0,      # flush/person/day
     "shower_minutes": 8.0,      # min/person/day
@@ -83,19 +106,22 @@ U_FIXTURES = {
 }
 
 # Flow/volume per use (litres) for fixtures
+
+# Toilet – volumes per flush; NZ dual-flush around 3/4.5 L half/full; old single flush higher :contentReference[oaicite:9]{index=9}
 V_TOILET = {
-    "Single flush": 9.0,
-    "Dual flush (standard)": 5.0,
-    "Dual flush (efficient)": 4.0,
+    "Single flush": 11.0,               # older cistern
+    "Dual flush (standard)": 6.0,       # typical mixed-use average
+    "Dual flush (efficient)": 4.0,      # better-performing units
 }
 
+# Showers – EECA & BRANZ recommend ≤9 L/min for efficient heads; older heads 15–20 L/min :contentReference[oaicite:10]{index=10}
 V_SHOWER = {
-    "Standard shower head": 9.0,   # L/min
+    "Standard shower head": 9.0,   # L/min (assume already better than very old 15–20 L/min)
     "Efficient shower head": 6.0,
 }
 
 V_BASIN = {
-    "Standard basin tap": 6.0,     # L/min
+    "Standard basin tap": 6.0,     # L/min (typical)
     "Efficient basin tap": 4.0,
 }
 
@@ -104,7 +130,7 @@ V_KITCHEN = {
     "Efficient kitchen tap": 6.0,
 }
 
-# Hot water fractions
+# Hot water fractions (stylised but consistent with end-use breakdowns) :contentReference[oaicite:11]{index=11}
 H_FIXTURES = {
     "toilet": 0.0,
     "shower": 0.8,
@@ -115,18 +141,22 @@ H_FIXTURES = {
 }
 
 # Laundry assumptions
+
+# Loads per week per household – stylised lifestyle categories
 LAUNDRY_LOADS_PER_WEEK = {
     "Low (1–2 loads/week)": 2,
     "Medium (3–5 loads/week)": 4,
     "High (6+ loads/week)": 7,
 }
 
+# Water per load from Consumer NZ: 8.5kg top loader ≈135 L/3.5kg load; 8.5kg front loader ≈64 L :contentReference[oaicite:12]{index=12}
 LAUNDRY_L_PER_LOAD = {
-    "Hand wash": 40.0,
-    "Standard machine": 70.0,
-    "Efficient machine": 50.0,
+    "Hand wash": 40.0,             # still stylised
+    "Standard machine": 135.0,     # treat as typical top loader
+    "Efficient machine": 64.0,     # treat as front loader
 }
 
+# Energy per load – order-of-magnitude based on EECA/appliance data
 LAUNDRY_KWH_PER_LOAD = {
     "Hand wash": 0.0,
     "Standard machine": 0.7,
@@ -140,30 +170,36 @@ DW_CYCLES_PER_WEEK = {
     "High": 7,
 }
 
-DW_L_PER_CYCLE = 15.0
+# Typical modern dishwasher Eco cycle ~10–12 L and ~0.8 kWh per wash :contentReference[oaicite:13]{index=13}
+DW_L_PER_CYCLE = 12.0
 DW_KWH_PER_CYCLE = 0.8
 
-# Embodied carbon intensities (kgCO2e/m² floor area, over 50 years – dummy)
+# =========================
+# EMBODIED CARBON (NZ CONTEXT)
+# =========================
+
+# Embodied carbon intensities (kgCO2e/m² floor area, over 50 years – stylised)
+# Anchored to ranges from NZGBC Embodied Carbon Methodology and BRANZ/LCAQuick examples :contentReference[oaicite:14]{index=14}
 EC_STRUCTURE = {
-    "Conventional timber": 150.0,
-    "Engineered timber (LVL/CLT)": 100.0,
-    "Higher-carbon structure": 200.0,
+    "Conventional timber": 120.0,
+    "Engineered timber (LVL/CLT)": 90.0,
+    "Higher-carbon structure": 200.0,   # e.g. heavy concrete/steel mix
 }
 
 EC_FLOOR = {
-    "Standard concrete slab": 120.0,
-    "Low-cement concrete": 90.0,
-    "Timber floor system": 70.0,
+    "Standard concrete slab": 110.0,
+    "Low-cement concrete": 80.0,
+    "Timber floor system": 60.0,
 }
 
 EC_WALLS = {
-    "Standard cladding mix": 60.0,
-    "Lower-carbon cladding": 40.0,
+    "Standard cladding mix": 50.0,
+    "Lower-carbon cladding": 35.0,
 }
 
 EC_ROOF = {
-    "Standard metal roof": 50.0,
-    "Lower-carbon roof": 35.0,
+    "Standard metal roof": 45.0,
+    "Lower-carbon roof": 30.0,
 }
 
 
