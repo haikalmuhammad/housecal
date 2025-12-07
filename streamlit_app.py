@@ -12,16 +12,46 @@ Q_HEAT_BASE = {
     "Cold": 80.0,
 }
 
-# Map NZ locations to winter climate bands (stylised mapping)
+# Map NZ towns/cities to simplified winter climate bands
 LOCATION_TO_CLIMATE = {
-    "Northland / Auckland": "Mild",
-    "Coromandel / Bay of Plenty": "Mild",
-    "Waikato / Taranaki / Manawatū": "Temperate",
-    "Wellington / Kāpiti / Wairarapa": "Temperate",
-    "Nelson / Marlborough / Coastal Canterbury & Otago": "Temperate",
-    "Central Plateau / Inland Canterbury & Otago": "Cold",
-    "Southland / Queenstown Lakes / Central Otago": "Cold",
+    # Northland & Auckland region
+    "Whangārei": "Mild",
+    "Auckland": "Mild",
+
+    # Upper / central North Island
+    "Hamilton": "Temperate",
+    "Tauranga": "Mild",
+    "Rotorua": "Temperate",
+    "Taupō": "Cold",
+    "Gisborne": "Mild",
+    "Napier / Hastings": "Temperate",
+    "New Plymouth": "Temperate",
+    "Palmerston North": "Temperate",
+
+    # Lower North Island
+    "Wellington": "Temperate",
+
+    # Upper South Island
+    "Nelson": "Temperate",
+    "Blenheim": "Temperate",
+
+    # West Coast & Canterbury
+    "Greymouth": "Temperate",
+    "Christchurch": "Temperate",
+    "Timaru": "Temperate",
+
+    # Otago & Southland
+    "Queenstown": "Cold",
+    "Dunedin": "Cold",
+    "Invercargill": "Cold",
+
+    # Fallback options
+    "Other North Island (warmer coastal)": "Mild",
+    "Other North Island (cooler inland)": "Temperate",
+    "Other South Island (coastal)": "Temperate",
+    "Other South Island (inland / colder)": "Cold",
 }
+
 
 # Dwelling type -> facade area factor (A_facade ≈ k * A_floor)
 K_FACADE = {
