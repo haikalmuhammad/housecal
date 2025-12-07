@@ -223,196 +223,28 @@ def heatloss_base_per_m2():
 HEATLOSS_BASE_PER_M2 = heatloss_base_per_m2()
 
 
-def compute_scenario(inputs: dict) -> dict:
-    """Compute all KPIs for one scenario based on user inputs."""
-    # Unpack inputs
-    climate_band = inputs["climate_band"]
-    dwelling_type = inputs["dwelling_type"]
-    window_area_cat = inputs["window_area_cat"]
-    wall_perf = inputs["wall_perf"]
-    glazing_type = inputs["glazing_type"]
-    floor_area = inputs["floor_area"]
-    n_occ = inputs["n_occ"]
-    heating_system = inputs["heating_system"]
-    heating_coverage = inputs["heating_coverage"]
-    water_heating_system = inputs["water_heating_system"]
-    toilet_type = inputs["toilet_type"]
-    shower_type = inputs["shower_type"]
-    basin_tap_type = inputs["basin_tap_type"]
-    kitchen_tap_type = inputs["kitchen_tap_type"]
-    laundry_use = inputs["laundry_use"]
-    laundry_type = inputs["laundry_type"]
-    laundry_freq = inputs["laundry_freq"]
-    dishwasher_use = inputs["dishwasher_use"]
-    dishwasher_freq = inputs["dishwasher_freq"]
-    structure_opt = inputs["structure_opt"]
-    floor_opt = inputs["floor_opt"]
-    wall_opt = inputs["wall_opt"]
-    roof_opt = inputs["roof_opt"]
-
-    # ---------- Space heating demand ----------
-    q_heat_base = Q_HEAT_BASE[climate_band]
-    kf = K_FACADE[dwelling_type]
-    wwr = WWR[window_area_cat]
-    u_wall = U_WALL[wall_perf]
-    u_win = U_WINDOW[glazing_type]
-
-    # Heat loss per m² floor for this scenario
-    a_facade_per_m2 = kf * 1.0
-    a_window_per_m2 = wwr * a_facade_per_m2
-    a_wall_per_m2 = a_facade_per_m2 - a_window_per_m2
-    heatloss_opt_per_m2 = u_wall * a_wall_per_m2 + u_win * a_window_per_m2
-
-    # Scale q_heat
-    ratio = heatloss_opt_per_m2 / HEATLOSS_BASE_PER_M2 if HEATLOSS_BASE_PER_M2 > 0 else 1.0
-    q_heat = q_heat_base * ratio
-
-    # Heating energy
-    f_cov = F_COVERAGE[heating_coverage]
-    a_heated = f_cov * floor_area
-    cop_h = COP_HEAT[heating_system]
-    if cop_h <= 0 or a_heated <= 0:
-        e_space_heating = 0.0
-    else:
-        e_space_heating = q_heat * a_heated / cop_h
-
-    # ---------- Water & hot water ----------
-    days = 365.0
-    v_total = 0.0
-    v_hot = 0.0
-
-    # Toilet
-    v_toilet_l_year = (
-        U_FIXTURES["toilet_flushes"]
-        * n_occ
-        * days
-        * V_TOILET[toilet_type]
-    )
-    v_toilet_m3 = v_toilet_l_year / 1000.0
-    v_total += v_toilet_m3
-    v_hot += v_toilet_m3 * H_FIXTURES["toilet"]  # = 0
-
-    # Shower
-    v_shower_l_year = (
-        U_FIXTURES["shower_minutes"]
-        * n_occ
-        * days
-        * V_SHOWER[shower_type]
-    )
-    v_shower_m3 = v_shower_l_year / 1000.0
-    v_total += v_shower_m3
-    v_hot += v_shower_m3 * H_FIXTURES["shower"]
-
-    # Basin
-    v_basin_l_year = (
-        U_FIXTURES["basin_minutes"]
-        * n_occ
-        * days
-        * V_BASIN[basin_tap_type]
-    )
-    v_basin_m3 = v_basin_l_year / 1000.0
-    v_total += v_basin_m3
-    v_hot += v_basin_m3 * H_FIXTURES["basin"]
-
-    # Kitchen
-    v_kitchen_l_year = (
-        U_FIXTURES["kitchen_minutes"]
-        * n_occ
-        * days
-        * V_KITCHEN[kitchen_tap_type]
-    )
-    v_kitchen_m3 = v_kitchen_l_year / 1000.0
-    v_total += v_kitchen_m3
-    v_hot += v_kitchen_m3 * H_FIXTURES["kitchen"]
-
-    # Laundry
-    e_laundry = 0.0
-    v_laundry_m3 = 0.0
-    v_laundry_hot_m3 = 0.0
-    if laundry_use == "Yes":
-        loads_per_week = LAUNDRY_LOADS_PER_WEEK[laundry_freq]
-        l_per_load = LAUNDRY_L_PER_LOAD[laundry_type]
-        kwh_per_load = LAUNDRY_KWH_PER_LOAD[laundry_type]
-        loads_per_year = loads_per_week * 52.0
-
-        v_laundry_l_year = loads_per_year * l_per_load
-        v_laundry_m3 = v_laundry_l_year / 1000.0
-        e_laundry = loads_per_year * kwh_per_load
-        v_laundry_hot_m3 = v_laundry_m3 * H_FIXTURES["laundry"]
-
-        v_total += v_laundry_m3
-        v_hot += v_laundry_hot_m3
-
-    # Dishwasher
-    e_dw = 0.0
-    v_dw_m3 = 0.0
-    v_dw_hot_m3 = 0.0
-    if dishwasher_use == "Yes":
-        cycles_per_week = DW_CYCLES_PER_WEEK[dishwasher_freq]
-        cycles_per_year = cycles_per_week * 52.0
-        v_dw_l_year = cycles_per_year * DW_L_PER_CYCLE
-        v_dw_m3 = v_dw_l_year / 1000.0
-        e_dw = cycles_per_year * DW_KWH_PER_CYCLE
-        v_dw_hot_m3 = v_dw_m3 * H_FIXTURES["dishwasher"]
-
-        v_total += v_dw_m3
-        v_hot += v_dw_hot_m3
-
-    # ---------- Hot water energy ----------
-    e_hw_theoretical = v_hot * E_HW_BASE
-    cop_hw = COP_HW[water_heating_system]
-    if cop_hw <= 0:
-        e_water_heating = e_hw_theoretical  # assume resistance
-    else:
-        e_water_heating = e_hw_theoretical / cop_hw
-
-    # ---------- Other loads ----------
-    e_other_base = Q_OTHER_BASE * floor_area
-    e_other = e_other_base + e_laundry + e_dw
-
-    # ---------- Total energy, carbon, cost ----------
-    e_total = e_space_heating + e_water_heating + e_other
-    c_operational = e_total * EF_EL
-    cost_energy = e_total * P_EL
-
-    # ---------- Embodied carbon ----------
-    ec_total_intensity = (
-        EC_STRUCTURE[structure_opt]
-        + EC_FLOOR[floor_opt]
-        + EC_WALLS[wall_opt]
-        + EC_ROOF[roof_opt]
-    )
-    c_embodied = ec_total_intensity * floor_area
-
-    outputs = {
-        "E_total": e_total,
-        "q_heat": q_heat,
-        "E_space_heating": e_space_heating,
-        "E_water_heating": e_water_heating,
-        "E_other": e_other,
-        "V_total": v_total,
-        "V_hot": v_hot,
-        "C_operational": c_operational,
-        "Cost_energy": cost_energy,
-        "EC_total_intensity": ec_total_intensity,
-        "C_embodied": c_embodied,
-    }
-    return outputs
-
-
 def scenario_input_ui(label_prefix: str = "Scenario") -> dict:
     """Builds Streamlit inputs and returns a dict of scenario inputs."""
     st.subheader(label_prefix)
 
-    climate_band = st.selectbox(
-        f"{label_prefix} – Climate band",
-        list(Q_HEAT_BASE.keys()),
+    # --- Location / climate band ---
+    location = st.selectbox(
+        f"{label_prefix} – Where do you live?",
+        list(LOCATION_TO_CLIMATE.keys()),
         index=1,
+        help=(
+            "Choose the region that best matches your home. "
+            "The tool will map this to a winter climate band (mild / temperate / cold) "
+            "based on Infracomfort's New Zealand winter climate zones."
+        ),
     )
+    climate_band = LOCATION_TO_CLIMATE[location]
 
     dwelling_type = st.selectbox(
         f"{label_prefix} – Dwelling type",
         list(K_FACADE.keys()),
+        help="Freestanding houses usually have more exposed walls than apartments, "
+             "so they lose more heat for the same floor area.",
     )
 
     col_a, col_b = st.columns(2)
@@ -423,6 +255,7 @@ def scenario_input_ui(label_prefix: str = "Scenario") -> dict:
             max_value=400.0,
             value=120.0,
             step=5.0,
+            help="Approximate internal floor area of the home.",
         )
     with col_b:
         n_occ = st.number_input(
@@ -431,47 +264,77 @@ def scenario_input_ui(label_prefix: str = "Scenario") -> dict:
             max_value=8,
             value=3,
             step=1,
+            help="How many people usually live in the home?",
         )
 
+    # --- Envelope (windows & walls) ---
     window_area_cat = st.selectbox(
-        f"{label_prefix} – Window area category",
+        f"{label_prefix} – Window area on external walls",
         list(WWR.keys()),
         index=1,
+        help=(
+            "Roughly how much glass do you have on outside walls (window-to-wall ratio)? "
+            "Low ≈ 15% of wall area, Medium ≈ 25%, High ≈ 40% or more."
+        ),
     )
 
     wall_perf = st.selectbox(
-        f"{label_prefix} – Wall performance",
+        f"{label_prefix} – Wall insulation level",
         list(U_WALL.keys()),
         index=1,
+        help=(
+            "Very poor / uninsulated: older walls with little or no insulation. "
+            "Typical NZ Code-like: current H1-level wall (around R1.6). "
+            "Improved insulation: higher-performance wall (around R2.5 or better)."
+        ),
     )
 
     glazing_type = st.selectbox(
         f"{label_prefix} – Window type",
         list(U_WINDOW.keys()),
         index=1,
+        help=(
+            "Mostly single glazing: older, less efficient windows. "
+            "Standard double glazing: current typical new-build windows. "
+            "High-performance: double glazing with low-E / better frames."
+        ),
     )
 
+    # --- Heating and hot water ---
     st.markdown("**Heating and hot water**")
 
     heating_system = st.selectbox(
         f"{label_prefix} – Main space heating system",
         list(COP_HEAT.keys()),
         index=3,  # default heat pump
+        help=(
+            "Portable / panel heaters use electricity directly (COP ≈ 1). "
+            "Heat pumps move heat and typically deliver ~3 units of heat per unit of electricity."
+        ),
     )
 
     heating_coverage = st.selectbox(
-        f"{label_prefix} – Heating coverage",
+        f"{label_prefix} – Which spaces do you usually heat in winter?",
         list(F_COVERAGE.keys()),
         index=1,
+        help=(
+            "This controls how much of the floor area is assumed to be heated. "
+            "If you're not sure, leave the default (living room + some bedrooms)."
+        ),
     )
 
     water_heating_system = st.selectbox(
         f"{label_prefix} – Water heating system",
         list(COP_HW.keys()),
         index=0,
+        help=(
+            "Electric cylinders are common but less efficient. "
+            "Heat pump water heaters use less electricity for the same hot water."
+        ),
     )
 
-    st.markdown("** Fixtures and water use **")
+    # --- Fixtures and water use ---
+    st.markdown("**Water fixtures and taps**")
 
     col1, col2 = st.columns(2)
     with col1:
@@ -479,54 +342,71 @@ def scenario_input_ui(label_prefix: str = "Scenario") -> dict:
             f"{label_prefix} – Toilet type",
             list(V_TOILET.keys()),
             index=1,
+            help=(
+                "Single flush represents older cisterns (~11 L/flush). "
+                "Standard dual flush ~6 L/flush on average. "
+                "Efficient dual flush ~4 L/flush."
+            ),
         )
         basin_tap_type = st.selectbox(
             f"{label_prefix} – Basin tap type",
             list(V_BASIN.keys()),
             index=0,
+            help="Standard taps ~6 L/min; efficient taps ~4 L/min.",
         )
     with col2:
         shower_type = st.selectbox(
             f"{label_prefix} – Shower head type",
             list(V_SHOWER.keys()),
             index=0,
+            help="Standard shower heads ~9 L/min; efficient heads ~6 L/min.",
         )
         kitchen_tap_type = st.selectbox(
             f"{label_prefix} – Kitchen tap type",
             list(V_KITCHEN.keys()),
             index=0,
+            help="Standard kitchen taps ~8 L/min; efficient taps ~6 L/min.",
         )
 
-    st.markdown("** Laundry and dishwasher **")
+    # --- Laundry and dishwasher ---
+    st.markdown("**Laundry and dishwasher**")
 
     laundry_use = st.selectbox(
         f"{label_prefix} – Do you wash clothes at home?",
         ["Yes", "No"],
         index=0,
+        help="If most laundry is done elsewhere (e.g. laundromat), choose No.",
     )
 
     if laundry_use == "Yes":
         col_l1, col_l2 = st.columns(2)
         with col_l1:
             laundry_type = st.selectbox(
-                f"{label_prefix} – Laundry type",
+                f"{label_prefix} – Washing machine type",
                 list(LAUNDRY_L_PER_LOAD.keys()),
                 index=1,
+                help=(
+                    "Standard machine ≈ top-loader (~135 L per load). "
+                    "Efficient machine ≈ front-loader (~64 L per load). "
+                    "Hand wash for small bucket / tub washing."
+                ),
             )
         with col_l2:
             laundry_freq = st.selectbox(
                 f"{label_prefix} – Laundry frequency",
                 list(LAUNDRY_LOADS_PER_WEEK.keys()),
                 index=1,
+                help="Approximate number of loads per week for the whole household.",
             )
     else:
         laundry_type = "Standard machine"
         laundry_freq = "Low (1–2 loads/week)"
 
     dishwasher_use = st.selectbox(
-        f"{label_prefix} – Do you use a dishwasher?",
+        f"{label_prefix} – Do you use a dishwasher regularly?",
         ["Yes", "No"],
         index=1,
+        help="Choose No if you mainly wash dishes by hand.",
     )
 
     if dishwasher_use == "Yes":
@@ -534,11 +414,13 @@ def scenario_input_ui(label_prefix: str = "Scenario") -> dict:
             f"{label_prefix} – Dishwasher frequency",
             list(DW_CYCLES_PER_WEEK.keys()),
             index=1,
+            help="Low ≈ 1–2 cycles/week, Medium ≈ 3–5, High ≈ 6 or more.",
         )
     else:
         dishwasher_freq = "Low"
 
-    st.markdown("** Materials (embodied carbon) **")
+    # --- Materials (embodied carbon) ---
+    st.markdown("**Main materials (for embodied carbon)**")
 
     col_m1, col_m2 = st.columns(2)
     with col_m1:
@@ -546,25 +428,56 @@ def scenario_input_ui(label_prefix: str = "Scenario") -> dict:
             f"{label_prefix} – Structure option",
             list(EC_STRUCTURE.keys()),
             index=0,
+            help=(
+                "Conventional timber: standard light timber framing. "
+                "Engineered timber: LVL/CLT-type systems. "
+                "Higher-carbon: more concrete/steel content."
+            ),
         )
         wall_opt = st.selectbox(
             f"{label_prefix} – Walls / cladding option",
             list(EC_WALLS.keys()),
             index=0,
+            help=(
+                "Standard cladding mix: e.g. brick + fibre-cement. "
+                "Lower-carbon cladding: timber or other lighter options."
+            ),
         )
     with col_m2:
         floor_opt = st.selectbox(
             f"{label_prefix} – Floor / slab option",
             list(EC_FLOOR.keys()),
             index=0,
+            help=(
+                "Standard slab: conventional concrete slab-on-ground. "
+                "Low-cement: mixes with reduced clinker content. "
+                "Timber floor: suspended timber system."
+            ),
         )
         roof_opt = st.selectbox(
             f"{label_prefix} – Roof option",
             list(EC_ROOF.keys()),
             index=0,
+            help=(
+                "Standard metal roof vs lower-carbon roof options "
+                "(e.g. lighter materials or lower-impact coatings)."
+            ),
         )
 
+    # Simple CAPEX field (Option only; Baseline assumed 0 incremental CAPEX)
+    if "Option" in label_prefix:
+        capex_extra = st.number_input(
+            f"{label_prefix} – Extra upgrade cost vs baseline (NZD, optional)",
+            min_value=0.0,
+            value=0.0,
+            step=500.0,
+            help="If you enter the extra cost of upgrades, the tool will estimate a simple payback time.",
+        )
+    else:
+        capex_extra = 0.0
+
     scenario_inputs = {
+        "location": location,
         "climate_band": climate_band,
         "dwelling_type": dwelling_type,
         "window_area_cat": window_area_cat,
@@ -588,82 +501,138 @@ def scenario_input_ui(label_prefix: str = "Scenario") -> dict:
         "floor_opt": floor_opt,
         "wall_opt": wall_opt,
         "roof_opt": roof_opt,
+        "capex_extra": capex_extra,
     }
 
     return scenario_inputs
+
 
 
 # =========================
 # STREAMLIT APP
 # =========================
 
-st.title("Early-stage NZ Housing Sustainability Prototype (dummy model)")
+st.title("Early-stage NZ Housing Sustainability Prototype")
 st.write(
     """
-This is a **prototype** calculator with dummy parameters.  
-It compares a **Baseline** scenario with an **Option** scenario for energy, water, carbon, and cost.
+This is a **prototype** calculator for New Zealand homes.  
+On the left, describe your **Baseline** home and an **Option** (improved) scenario.  
+On the right, the results update in real time.
+
+This is **not** a Homestar or EDGE rating tool – it is only inspired by some of their ideas.
 """
 )
 
-tab1, tab2 = st.tabs(["Inputs", "Results"])
+# Layout: left = inputs, right = results
+col_left, col_right = st.columns([3, 2])
 
-with tab1:
-    col_left, col_right = st.columns(2)
+# -------- LEFT: INPUTS --------
+with col_left:
+    st.markdown("### Describe your two scenarios")
 
-    with col_left:
+    with st.expander("Baseline scenario (current / typical home)", expanded=True):
         baseline_inputs = scenario_input_ui("Baseline scenario")
 
-    with col_right:
+    with st.expander("Option scenario (improved / upgraded home)", expanded=True):
         option_inputs = scenario_input_ui("Option scenario")
 
-with tab2:
-    # Compute both scenarios
-    baseline_outputs = compute_scenario(baseline_inputs)
-    option_outputs = compute_scenario(option_inputs)
+# Hitung setelah kedua skenario diisi
+baseline_outputs = compute_scenario(baseline_inputs)
+option_outputs = compute_scenario(option_inputs)
 
-    st.subheader("Key outputs per scenario")
+# Savings vs baseline
+energy_savings = baseline_outputs["E_total"] - option_outputs["E_total"]
+water_savings = baseline_outputs["V_total"] - option_outputs["V_total"]
+co2_savings = baseline_outputs["C_operational"] - option_outputs["C_operational"]
+cost_savings = baseline_outputs["Cost_energy"] - option_outputs["Cost_energy"]
+ec_savings = baseline_outputs["C_embodied"] - option_outputs["C_embodied"]
+
+def pct_saving(abs_saving, baseline_value):
+    if baseline_value <= 0:
+        return 0.0
+    return abs_saving / baseline_value * 100.0
+
+energy_savings_pct = pct_saving(energy_savings, baseline_outputs["E_total"])
+water_savings_pct = pct_saving(water_savings, baseline_outputs["V_total"])
+co2_savings_pct = pct_saving(co2_savings, baseline_outputs["C_operational"])
+cost_savings_pct = pct_saving(cost_savings, baseline_outputs["Cost_energy"])
+ec_savings_pct = pct_saving(ec_savings, baseline_outputs["C_embodied"])
+
+# Simple payback
+capex_baseline = baseline_inputs.get("capex_extra", 0.0)
+capex_option = option_inputs.get("capex_extra", 0.0)
+capex_incremental = max(capex_option - capex_baseline, 0.0)
+
+if capex_incremental > 0 and cost_savings > 0:
+    payback_years = capex_incremental / cost_savings
+    payback_text = f"{payback_years:.1f} years"
+else:
+    payback_text = "N/A (no positive savings or CAPEX entered)"
+
+# -------- RIGHT: RESULTS --------
+with col_right:
+    st.markdown("### Summary results")
 
     col_b, col_o = st.columns(2)
 
     with col_b:
-        st.markdown("**Baseline scenario**")
+        st.markdown("**Baseline**")
         st.metric("Final energy use (kWh/year)", f"{baseline_outputs['E_total']:.0f}")
-        st.metric("Space heating intensity (kWh/m²/yr)", f"{baseline_outputs['q_heat']:.1f}")
-        st.metric("Potable water use (m³/year)", f"{baseline_outputs['V_total']:.1f}")
+        st.metric("Energy intensity (kWh/m²/year)", f"{baseline_outputs['E_total_intensity']:.1f}")
+        st.metric("Space heating demand (kWh/m²/year)", f"{baseline_outputs['q_heat']:.1f}")
+        st.metric("Indoor water use (m³/year)", f"{baseline_outputs['V_total']:.1f}")
         st.metric("Operational CO₂ (kgCO₂/year)", f"{baseline_outputs['C_operational']:.0f}")
         st.metric("Energy cost (NZD/year)", f"{baseline_outputs['Cost_energy']:.0f}")
-        st.metric("Embodied carbon intensity (kgCO₂e/m²)", f"{baseline_outputs['EC_total_intensity']:.0f}")
         st.metric("Total embodied carbon (kgCO₂e)", f"{baseline_outputs['C_embodied']:.0f}")
 
     with col_o:
-        st.markdown("**Option scenario**")
+        st.markdown("**Option**")
         st.metric("Final energy use (kWh/year)", f"{option_outputs['E_total']:.0f}")
-        st.metric("Space heating intensity (kWh/m²/yr)", f"{option_outputs['q_heat']:.1f}")
-        st.metric("Potable water use (m³/year)", f"{option_outputs['V_total']:.1f}")
+        st.metric("Energy intensity (kWh/m²/year)", f"{option_outputs['E_total_intensity']:.1f}")
+        st.metric("Space heating demand (kWh/m²/year)", f"{option_outputs['q_heat']:.1f}")
+        st.metric("Indoor water use (m³/year)", f"{option_outputs['V_total']:.1f}")
         st.metric("Operational CO₂ (kgCO₂/year)", f"{option_outputs['C_operational']:.0f}")
         st.metric("Energy cost (NZD/year)", f"{option_outputs['Cost_energy']:.0f}")
-        st.metric("Embodied carbon intensity (kgCO₂e/m²)", f"{option_outputs['EC_total_intensity']:.0f}")
         st.metric("Total embodied carbon (kgCO₂e)", f"{option_outputs['C_embodied']:.0f}")
 
-    st.subheader("Savings of Option vs Baseline")
+    st.markdown("### Savings of Option vs Baseline")
 
-    energy_savings = baseline_outputs["E_total"] - option_outputs["E_total"]
-    water_savings = baseline_outputs["V_total"] - option_outputs["V_total"]
-    co2_savings = baseline_outputs["C_operational"] - option_outputs["C_operational"]
-    cost_savings = baseline_outputs["Cost_energy"] - option_outputs["Cost_energy"]
-    ec_savings = baseline_outputs["C_embodied"] - option_outputs["C_embodied"]
-
-    col_s1, col_s2, col_s3 = st.columns(3)
+    col_s1, col_s2 = st.columns(2)
     with col_s1:
-        st.metric("Energy savings (kWh/yr)", f"{energy_savings:.0f}")
-        st.metric("Water savings (m³/yr)", f"{water_savings:.1f}")
+        st.metric("Energy savings (kWh/year)", f"{energy_savings:.0f}")
+        st.metric("Energy savings (%)", f"{energy_savings_pct:.1f}")
+        st.metric("Water savings (m³/year)", f"{water_savings:.1f}")
+        st.metric("Water savings (%)", f"{water_savings_pct:.1f}")
     with col_s2:
-        st.metric("Operational CO₂ savings (kgCO₂/yr)", f"{co2_savings:.0f}")
-        st.metric("Energy bill savings (NZD/yr)", f"{cost_savings:.0f}")
-    with col_s3:
-        st.metric("Embodied carbon savings (kgCO₂e)", f"{ec_savings:.0f}")
+        st.metric("Operational CO₂ savings (kgCO₂/year)", f"{co2_savings:.0f}")
+        st.metric("CO₂ savings (%)", f"{co2_savings_pct:.1f}")
+        st.metric("Bill savings (NZD/year)", f"{cost_savings:.0f}")
+        st.metric("Bill savings (%)", f"{cost_savings_pct:.1f}")
+
+    st.markdown("### Simple payback (if you entered extra cost)")
+
+    st.write(f"Incremental upgrade cost (Option vs Baseline): **{capex_incremental:,.0f} NZD**")
+    st.write(f"Simple payback period: **{payback_text}**")
+
+    # Detail per domain (mini-results per subsection)
+    with st.expander("Energy & heating details"):
+        st.write("**Baseline vs Option – annual energy breakdown**")
+        st.write(f"- Space heating: {baseline_outputs['E_space_heating']:.0f} → {option_outputs['E_space_heating']:.0f} kWh/yr")
+        st.write(f"- Hot water: {baseline_outputs['E_water_heating']:.0f} → {option_outputs['E_water_heating']:.0f} kWh/yr")
+        st.write(f"- Other loads: {baseline_outputs['E_other']:.0f} → {option_outputs['E_other']:.0f} kWh/yr")
+
+    with st.expander("Water & hot water details"):
+        st.write("**Baseline vs Option – indoor water**")
+        st.write(f"- Total indoor water: {baseline_outputs['V_total']:.1f} → {option_outputs['V_total']:.1f} m³/yr")
+        st.write(f"- Hot water volume: {baseline_outputs['V_hot']:.1f} → {option_outputs['V_hot']:.1f} m³/yr")
+
+    with st.expander("Embodied carbon details"):
+        st.write("**Embodied carbon intensity per m² floor area**")
+        st.write(f"- Baseline: {baseline_outputs['EC_total_intensity']:.0f} kgCO₂e/m²")
+        st.write(f"- Option: {option_outputs['EC_total_intensity']:.0f} kgCO₂e/m²")
 
     st.info(
-        "All numbers use **dummy parameters** for illustration. "
-        "For the thesis, you will replace them with NZ-based values from literature."
+        "All numbers currently use **simplified NZ-based assumptions** for illustration. "
+        "For the thesis, the focus is on relative changes between Baseline and Option, not precise compliance numbers."
     )
+
