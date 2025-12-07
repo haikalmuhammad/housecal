@@ -529,218 +529,220 @@ def compute_capex(inputs: dict) -> float:
 # =========================
 
 def scenario_input_ui(label_prefix: str = "Scenario") -> dict:
-    """Builds Streamlit inputs and returns a dict of scenario inputs."""
-    st.subheader(label_prefix)
-
-    # Location & climate
-    location = st.selectbox(
-        f"{label_prefix} – Closest town or city",
-        list(LOCATION_TO_CLIMATE.keys()),
-        index=list(LOCATION_TO_CLIMATE.keys()).index("Dunedin")
-        if "Dunedin" in LOCATION_TO_CLIMATE else 0,
-        help="Pick the town/city that best matches your home location.",
-        key=f"{label_prefix}_location",
-    )
-    climate_band = LOCATION_TO_CLIMATE[location]
-    st.caption(f"Internal climate band: **{climate_band}**")
-
-    dwelling_type = st.selectbox(
-        f"{label_prefix} – Dwelling type",
-        list(K_FACADE.keys()),
-        help="Freestanding houses usually have more exposed walls than apartments.",
-        key=f"{label_prefix}_dwelling_type",
-    )
-
-    col_a, col_b = st.columns(2)
-    with col_a:
-        floor_area = st.number_input(
-            f"{label_prefix} – Floor area (m²)",
-            min_value=30.0,
-            max_value=400.0,
-            value=120.0,
-            step=5.0,
-            help="Approximate internal floor area of the home.",
-            key=f"{label_prefix}_floor_area",
+    """
+    Build Streamlit inputs for one scenario (Baseline or Option).
+    UI is grouped into accordions to reduce clutter.
+    label_prefix is only used for widget keys.
+    """
+    # --- 1. Basic dwelling info ---
+    with st.expander("1. Basic dwelling information", expanded=True):
+        location = st.selectbox(
+            "Closest town or city",
+            list(LOCATION_TO_CLIMATE.keys()),
+            index=list(LOCATION_TO_CLIMATE.keys()).index("Dunedin")
+            if "Dunedin" in LOCATION_TO_CLIMATE else 0,
+            help="Pick the town/city that best matches your home location.",
+            key=f"{label_prefix}_location",
         )
-    with col_b:
-        n_occ = st.number_input(
-            f"{label_prefix} – Number of occupants",
-            min_value=1,
-            max_value=8,
-            value=3,
-            step=1,
-            help="How many people usually live in the home?",
-            key=f"{label_prefix}_n_occ",
+        climate_band = LOCATION_TO_CLIMATE[location]
+        st.caption(f"Internal climate band used in the model: **{climate_band}**")
+
+        dwelling_type = st.selectbox(
+            "Dwelling type",
+            list(K_FACADE.keys()),
+            help="Freestanding houses usually have more exposed walls than apartments.",
+            key=f"{label_prefix}_dwelling_type",
         )
 
-    window_area_cat = st.selectbox(
-        f"{label_prefix} – Window area on external walls",
-        list(WWR.keys()),
-        index=1,
-        help="Low ≈ 15% glass, Medium ≈ 25%, High ≈ 40%+ of external wall area.",
-        key=f"{label_prefix}_window_area",
-    )
+        col_a, col_b = st.columns(2)
+        with col_a:
+            floor_area = st.number_input(
+                "Floor area (m²)",
+                min_value=30.0,
+                max_value=400.0,
+                value=120.0,
+                step=5.0,
+                help="Approximate internal floor area of the home.",
+                key=f"{label_prefix}_floor_area",
+            )
+        with col_b:
+            n_occ = st.number_input(
+                "Number of occupants",
+                min_value=1,
+                max_value=8,
+                value=3,
+                step=1,
+                help="How many people usually live in the home?",
+                key=f"{label_prefix}_n_occ",
+            )
 
-    wall_perf = st.selectbox(
-        f"{label_prefix} – Wall insulation level",
-        list(U_WALL.keys()),
-        index=1,
-        help="Very poor: little/no insulation. Code-like: typical Building Code. Improved: better than code.",
-        key=f"{label_prefix}_wall_perf",
-    )
+    # --- 2. Building fabric / envelope ---
+    with st.expander("2. Building fabric (walls & windows)", expanded=False):
+        window_area_cat = st.selectbox(
+            "Window area on external walls",
+            list(WWR.keys()),
+            index=1,
+            help="Low ≈ 15% glass, Medium ≈ 25%, High ≈ 40%+ of external wall area.",
+            key=f"{label_prefix}_window_area",
+        )
 
-    glazing_type = st.selectbox(
-        f"{label_prefix} – Window type",
-        list(U_WINDOW.keys()),
-        index=1,
-        help="Single glazing vs standard double vs high-performance double glazing.",
-        key=f"{label_prefix}_glazing",
-    )
+        wall_perf = st.selectbox(
+            "Wall insulation level",
+            list(U_WALL.keys()),
+            index=1,
+            help="Very poor: little/no insulation. Code-like: typical Building Code. Improved: better than code.",
+            key=f"{label_prefix}_wall_perf",
+        )
 
-    st.markdown("**Heating and hot water**")
+        glazing_type = st.selectbox(
+            "Window type",
+            list(U_WINDOW.keys()),
+            index=1,
+            help="Single glazing vs standard double vs high-performance double glazing.",
+            key=f"{label_prefix}_glazing",
+        )
 
-    heating_system = st.selectbox(
-        f"{label_prefix} – Main space heating system",
-        list(COP_HEAT.keys()),
-        index=3,
-        help="Portable/panel heaters are resistive (COP ~1); heat pumps give more heat per kWh.",
-        key=f"{label_prefix}_heating_system",
-    )
+    # --- 3. Heating & hot water ---
+    with st.expander("3. Space heating and hot water", expanded=False):
+        heating_system = st.selectbox(
+            "Main space heating system",
+            list(COP_HEAT.keys()),
+            index=3,
+            help="Portable/panel heaters are resistive (COP ~1); heat pumps give more heat per kWh.",
+            key=f"{label_prefix}_heating_system",
+        )
 
-    heating_coverage = st.selectbox(
-        f"{label_prefix} – Which spaces are usually heated in winter?",
-        list(F_COVERAGE.keys()),
-        index=1,
-        help="Controls how much of the floor area is assumed to be heated.",
-        key=f"{label_prefix}_heating_cov",
-    )
+        heating_coverage = st.selectbox(
+            "Which spaces are usually heated in winter?",
+            list(F_COVERAGE.keys()),
+            index=1,
+            help="Controls how much of the floor area is assumed to be heated.",
+            key=f"{label_prefix}_heating_cov",
+        )
 
-    water_heating_system = st.selectbox(
-        f"{label_prefix} – Water heating system",
-        list(COP_HW.keys()),
-        index=0,
-        help="Electric cylinders are common; heat pump water heaters use less electricity.",
-        key=f"{label_prefix}_water_heating",
-    )
+        water_heating_system = st.selectbox(
+            "Water heating system",
+            list(COP_HW.keys()),
+            index=0,
+            help="Electric cylinders are common; heat pump water heaters use less electricity.",
+            key=f"{label_prefix}_water_heating",
+        )
 
-    st.markdown("**Water fixtures and taps**")
-
-    col1, col2 = st.columns(2)
-    with col1:
+    # --- 4. Water fixtures & taps ---
+    with st.expander("4. Water fixtures and taps", expanded=False):
         toilet_type = st.selectbox(
-            f"{label_prefix} – Toilet type",
+            "Toilet type",
             list(V_TOILET.keys()),
             index=1,
             help="Single flush ≈ older cistern; dual flush options use less per flush.",
             key=f"{label_prefix}_toilet",
         )
-        basin_tap_type = st.selectbox(
-            f"{label_prefix} – Basin tap type",
-            list(V_BASIN.keys()),
-            index=0,
-            help="Standard taps ≈ 6 L/min; efficient ≈ 4 L/min.",
-            key=f"{label_prefix}_basin",
-        )
-    with col2:
         shower_type = st.selectbox(
-            f"{label_prefix} – Shower head type",
+            "Shower head type",
             list(V_SHOWER.keys()),
             index=0,
             help="Standard heads ≈ 9 L/min; efficient ≈ 6 L/min.",
             key=f"{label_prefix}_shower",
         )
+        basin_tap_type = st.selectbox(
+            "Basin tap type",
+            list(V_BASIN.keys()),
+            index=0,
+            help="Standard taps ≈ 6 L/min; efficient ≈ 4 L/min.",
+            key=f"{label_prefix}_basin",
+        )
         kitchen_tap_type = st.selectbox(
-            f"{label_prefix} – Kitchen tap type",
+            "Kitchen tap type",
             list(V_KITCHEN.keys()),
             index=0,
             help="Standard ≈ 8 L/min; efficient ≈ 6 L/min.",
             key=f"{label_prefix}_kitchen",
         )
 
-    st.markdown("**Laundry and dishwasher**")
+    # --- 5. Laundry & dishwasher ---
+    with st.expander("5. Laundry and dishwasher", expanded=False):
+        laundry_use = st.selectbox(
+            "Do you wash clothes at home?",
+            ["Yes", "No"],
+            index=0,
+            help="Choose No if most laundry is done elsewhere.",
+            key=f"{label_prefix}_laundry_use",
+        )
 
-    laundry_use = st.selectbox(
-        f"{label_prefix} – Do you wash clothes at home?",
-        ["Yes", "No"],
-        index=0,
-        help="Choose No if most laundry is done elsewhere.",
-        key=f"{label_prefix}_laundry_use",
-    )
+        if laundry_use == "Yes":
+            col_l1, col_l2 = st.columns(2)
+            with col_l1:
+                laundry_type = st.selectbox(
+                    "Washing machine type",
+                    list(LAUNDRY_L_PER_LOAD.keys()),
+                    index=1,
+                    help="Standard ≈ typical top-loader; efficient ≈ front-loader.",
+                    key=f"{label_prefix}_laundry_type",
+                )
+            with col_l2:
+                laundry_freq = st.selectbox(
+                    "Laundry frequency",
+                    list(LAUNDRY_LOADS_PER_WEEK.keys()),
+                    index=1,
+                    help="Approximate number of loads per week for the household.",
+                    key=f"{label_prefix}_laundry_freq",
+                )
+        else:
+            laundry_type = "Standard machine"
+            laundry_freq = "Low (1–2 loads/week)"
 
-    if laundry_use == "Yes":
-        col_l1, col_l2 = st.columns(2)
-        with col_l1:
-            laundry_type = st.selectbox(
-                f"{label_prefix} – Washing machine type",
-                list(LAUNDRY_L_PER_LOAD.keys()),
-                index=1,
-                help="Standard ≈ typical top-loader; efficient ≈ front-loader.",
-                key=f"{label_prefix}_laundry_type",
-            )
-        with col_l2:
-            laundry_freq = st.selectbox(
-                f"{label_prefix} – Laundry frequency",
-                list(LAUNDRY_LOADS_PER_WEEK.keys()),
-                index=1,
-                help="Approximate number of loads per week for the household.",
-                key=f"{label_prefix}_laundry_freq",
-            )
-    else:
-        laundry_type = "Standard machine"
-        laundry_freq = "Low (1–2 loads/week)"
-
-    dishwasher_use = st.selectbox(
-        f"{label_prefix} – Do you use a dishwasher regularly?",
-        ["Yes", "No"],
-        index=1,
-        help="Choose No if you mainly wash dishes by hand.",
-        key=f"{label_prefix}_dw_use",
-    )
-
-    if dishwasher_use == "Yes":
-        dishwasher_freq = st.selectbox(
-            f"{label_prefix} – Dishwasher frequency",
-            list(DW_CYCLES_PER_WEEK.keys()),
+        dishwasher_use = st.selectbox(
+            "Do you use a dishwasher regularly?",
+            ["Yes", "No"],
             index=1,
-            help="Low ≈ 1–2 cycles/week, Medium ≈ 3–5, High ≈ 6+.",
-            key=f"{label_prefix}_dw_freq",
+            help="Choose No if you mainly wash dishes by hand.",
+            key=f"{label_prefix}_dw_use",
         )
-    else:
-        dishwasher_freq = "Low"
 
-    st.markdown("**Main materials (embodied carbon)**")
+        if dishwasher_use == "Yes":
+            dishwasher_freq = st.selectbox(
+                "Dishwasher frequency",
+                list(DW_CYCLES_PER_WEEK.keys()),
+                index=1,
+                help="Low ≈ 1–2 cycles/week, Medium ≈ 3–5, High ≈ 6+.",
+                key=f"{label_prefix}_dw_freq",
+            )
+        else:
+            dishwasher_freq = "Low"
 
-    col_m1, col_m2 = st.columns(2)
-    with col_m1:
-        structure_opt = st.selectbox(
-            f"{label_prefix} – Structure option",
-            list(EC_STRUCTURE.keys()),
-            index=0,
-            help="Conventional timber vs engineered timber vs higher-carbon structure.",
-            key=f"{label_prefix}_structure",
-        )
-        wall_opt = st.selectbox(
-            f"{label_prefix} – Walls / cladding option",
-            list(EC_WALLS.keys()),
-            index=0,
-            help="Standard cladding mix vs lower-carbon alternatives.",
-            key=f"{label_prefix}_wall_material",
-        )
-    with col_m2:
-        floor_opt = st.selectbox(
-            f"{label_prefix} – Floor / slab option",
-            list(EC_FLOOR.keys()),
-            index=0,
-            help="Standard concrete slab vs lower-carbon or timber floor.",
-            key=f"{label_prefix}_floor_material",
-        )
-        roof_opt = st.selectbox(
-            f"{label_prefix} – Roof option",
-            list(EC_ROOF.keys()),
-            index=0,
-            help="Standard metal roof vs lower-carbon roof.",
-            key=f"{label_prefix}_roof_material",
-        )
+    # --- 6. Main materials (embodied carbon) ---
+    with st.expander("6. Main materials (embodied carbon)", expanded=False):
+        col_m1, col_m2 = st.columns(2)
+        with col_m1:
+            structure_opt = st.selectbox(
+                "Structure option",
+                list(EC_STRUCTURE.keys()),
+                index=0,
+                help="Conventional timber vs engineered timber vs higher-carbon structure.",
+                key=f"{label_prefix}_structure",
+            )
+            wall_opt = st.selectbox(
+                "Walls / cladding option",
+                list(EC_WALLS.keys()),
+                index=0,
+                help="Standard cladding mix vs lower-carbon alternatives.",
+                key=f"{label_prefix}_wall_material",
+            )
+        with col_m2:
+            floor_opt = st.selectbox(
+                "Floor / slab option",
+                list(EC_FLOOR.keys()),
+                index=0,
+                help="Standard concrete slab vs lower-carbon or timber floor.",
+                key=f"{label_prefix}_floor_material",
+            )
+            roof_opt = st.selectbox(
+                "Roof option",
+                list(EC_ROOF.keys()),
+                index=0,
+                help="Standard metal roof vs lower-carbon roof.",
+                key=f"{label_prefix}_roof_material",
+            )
 
     scenario_inputs = {
         "location": location,
@@ -838,41 +840,48 @@ with col3:
     st.header("Results")
 
     st.subheader("Key KPIs (Option, with change vs Baseline)")
-    # delta = Option - Baseline (negatif = perbaikan)
+    # delta = Option - Baseline (negatif = perbaikan), jadi pakai delta_color="inverse"
     st.metric(
         "Final energy use (kWh/yr)",
         f"{option_outputs['E_total']:.0f}",
         delta=f"{option_outputs['E_total'] - baseline_outputs['E_total']:.0f}",
+        delta_color="inverse",
     )
     st.metric(
         "Energy intensity (kWh/m²/yr)",
         f"{option_outputs['E_total_intensity']:.1f}",
         delta=f"{option_outputs['E_total_intensity'] - baseline_outputs['E_total_intensity']:.1f}",
+        delta_color="inverse",
     )
     st.metric(
         "Space heating demand (kWh/m²/yr)",
         f"{option_outputs['q_heat']:.1f}",
         delta=f"{option_outputs['q_heat'] - baseline_outputs['q_heat']:.1f}",
+        delta_color="inverse",
     )
     st.metric(
         "Indoor water use (m³/yr)",
         f"{option_outputs['V_total']:.1f}",
         delta=f"{option_outputs['V_total'] - baseline_outputs['V_total']:.1f}",
+        delta_color="inverse",
     )
     st.metric(
         "Operational CO₂ (kgCO₂/yr)",
         f"{option_outputs['C_operational']:.0f}",
         delta=f"{option_outputs['C_operational'] - baseline_outputs['C_operational']:.0f}",
+        delta_color="inverse",
     )
     st.metric(
         "Energy bill (NZD/yr)",
         f"{option_outputs['Cost_energy']:.0f}",
         delta=f"{option_outputs['Cost_energy'] - baseline_outputs['Cost_energy']:.0f}",
+        delta_color="inverse",
     )
     st.metric(
         "Total embodied carbon (kgCO₂e)",
         f"{option_outputs['C_embodied']:.0f}",
         delta=f"{option_outputs['C_embodied'] - baseline_outputs['C_embodied']:.0f}",
+        delta_color="inverse",
     )
 
     st.subheader("Savings of Option vs Baseline (positive = Option better)")
@@ -887,6 +896,7 @@ with col3:
     st.write(f"- Estimated CAPEX – Option: **{capex_option:,.0f} NZD**")
     st.write(f"- Incremental CAPEX (Option − Baseline): **{capex_incremental:,.0f} NZD**")
     st.write(f"- Simple payback: **{payback_text}**")
+    st.caption("Payback only shown when the Option costs more upfront **and** reduces annual energy bills.")
 
     with st.expander("Breakdown (energy & water)"):
         st.write(
