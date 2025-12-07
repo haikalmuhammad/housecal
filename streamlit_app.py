@@ -181,6 +181,73 @@ EC_ROOF = {
 }
 
 # =========================
+# UPGRADE COST ASSUMPTIONS (STYLISED, DUMMY NZD)
+# =========================
+
+# Tambahan biaya insulation dinding per m2 lantai (dibanding "sangat buruk")
+COST_WALL_PER_M2_FLOOR = {
+    "Very poor / uninsulated": 0.0,
+    "Typical NZ Code-like": 60.0,     # misal extra insulation vs uninsulated
+    "Improved insulation": 120.0,     # more insulation / higher spec
+}
+
+# Tambahan biaya jendela per m2 kaca (dibanding single glazing)
+COST_WINDOW_PER_M2_WINDOW = {
+    "Mostly single glazing": 0.0,
+    "Standard double glazing": 350.0,
+    "High-performance double / Low-E": 500.0,
+}
+
+# Biaya sistem pemanas ruang (per rumah)
+COST_HEATING_SYSTEM = {
+    "None": 0.0,
+    "Portable electric heaters": 500.0,
+    "Panel / convector heaters": 2_000.0,
+    "Heat pump (split system)": 5_000.0,
+}
+
+# Biaya sistem pemanas air (per rumah)
+COST_WATER_HEATING_SYSTEM = {
+    "Electric cylinder": 2_500.0,
+    "Heat pump water heater": 5_000.0,
+}
+
+# Biaya upgrade fixture (anggap 1 utama per rumah)
+COST_TOILET = {
+    "Single flush": 0.0,
+    "Dual flush (standard)": 300.0,
+    "Dual flush (efficient)": 400.0,
+}
+
+COST_SHOWER = {
+    "Standard shower head": 0.0,
+    "Efficient shower head": 150.0,
+}
+
+COST_BASIN_TAP = {
+    "Standard basin tap": 0.0,
+    "Efficient basin tap": 100.0,
+}
+
+COST_KITCHEN_TAP = {
+    "Standard kitchen tap": 0.0,
+    "Efficient kitchen tap": 120.0,
+}
+
+# Biaya mesin cuci (untuk skenario yang pakai mesin)
+COST_LAUNDRY_MACHINE = {
+    "Hand wash": 0.0,
+    "Standard machine": 800.0,
+    "Efficient machine": 1_200.0,
+}
+
+# Biaya dishwasher (anggap satu unit)
+COST_DISHWASHER = {
+    "Has dishwasher": 1_000.0,
+    "No dishwasher": 0.0,
+}
+
+# =========================
 # HELPER FUNCTIONS
 # =========================
 
@@ -382,6 +449,75 @@ def compute_scenario(inputs: dict) -> dict:
         "C_embodied": c_embodied,
     }
     return outputs
+
+def compute_capex(inputs: dict) -> float:
+    """
+    Estimate a stylised upgrade CAPEX (NZD) for one scenario
+    based on envelope, systems, and fixture choices.
+    """
+    floor_area = inputs["floor_area"]
+    dwelling_type = inputs["dwelling_type"]
+    window_area_cat = inputs["window_area_cat"]
+    wall_perf = inputs["wall_perf"]
+    glazing_type = inputs["glazing_type"]
+    heating_system = inputs["heating_system"]
+    water_heating_system = inputs["water_heating_system"]
+    toilet_type = inputs["toilet_type"]
+    shower_type = inputs["shower_type"]
+    basin_tap_type = inputs["basin_tap_type"]
+    kitchen_tap_type = inputs["kitchen_tap_type"]
+    laundry_use = inputs["laundry_use"]
+    laundry_type = inputs["laundry_type"]
+    dishwasher_use = inputs["dishwasher_use"]
+
+    # Perkiraan luas kaca per m² lantai (pakai geometri yang sama dengan model energi)
+    kf = K_FACADE[dwelling_type]
+    wwr = WWR[window_area_cat]
+    a_facade_per_m2 = kf * 1.0
+    a_window_per_m2 = wwr * a_facade_per_m2
+    window_area_total = a_window_per_m2 * floor_area  # m² kaca total
+
+    # Envelope costs
+    wall_cost = COST_WALL_PER_M2_FLOOR[wall_perf] * floor_area
+    window_cost = COST_WINDOW_PER_M2_WINDOW[glazing_type] * window_area_total
+
+    # Heating & hot water systems (lump-sum per dwelling)
+    heating_cost = COST_HEATING_SYSTEM[heating_system]
+    water_heating_cost = COST_WATER_HEATING_SYSTEM[water_heating_system]
+
+    # Fixtures (anggap 1 toilet utama, 1 shower utama, 1 basin set, 1 kitchen tap)
+    toilet_cost = COST_TOILET[toilet_type]
+    shower_cost = COST_SHOWER[shower_type]
+    basin_cost = COST_BASIN_TAP[basin_tap_type]
+    kitchen_cost = COST_KITCHEN_TAP[kitchen_tap_type]
+
+    # Laundry machine (hanya kalau laundry_use == Yes)
+    if laundry_use == "Yes":
+        laundry_cost = COST_LAUNDRY_MACHINE[laundry_type]
+    else:
+        laundry_cost = 0.0
+
+    # Dishwasher
+    if dishwasher_use == "Yes":
+        dishwasher_cost = COST_DISHWASHER["Has dishwasher"]
+    else:
+        dishwasher_cost = COST_DISHWASHER["No dishwasher"]
+
+    total_capex = (
+        wall_cost
+        + window_cost
+        + heating_cost
+        + water_heating_cost
+        + toilet_cost
+        + shower_cost
+        + basin_cost
+        + kitchen_cost
+        + laundry_cost
+        + dishwasher_cost
+    )
+
+    return total_capex
+
 
 # =========================
 # INPUT UI
