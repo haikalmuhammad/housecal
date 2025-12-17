@@ -1,22 +1,26 @@
 # app.py
-# Streamlit version with:
-# - Results hidden until user clicks "Calculate / Update Results"
-# - NO default selection for ALL categorical inputs (dropdowns start blank)
-# - NO default selection for dishwasher / washing machine (checkboxes start OFF)
-# - Numeric fields still have defaults
-
+import copy
 import json
 import math
-from copy import deepcopy
-from datetime import datetime, timezone
+import hashlib
+from datetime import datetime
 
 import pandas as pd
 import streamlit as st
+import plotly.express as px
+
+# =============================================================================
+# CONFIG
+# =============================================================================
+st.set_page_config(page_title="NZ Housing Sustainability Calculator (Prototype)", layout="wide")
+
+PLACEHOLDER = "— Select —"
 
 # =============================================================================
 # DUMMY COEFFICIENTS (PLACEHOLDERS)
 # =============================================================================
 
+# DUMMY: NZ Climate Zones Heating Degree Days (base 18°C)
 HDD_LOOKUP_BASE18 = {
     "Zone 1 (Warmest - e.g., Northland)": 1200,
     "Zone 2 (Warm - e.g., Auckland)": 1600,
@@ -26,6 +30,7 @@ HDD_LOOKUP_BASE18 = {
     "Zone 6 (Coldest - e.g., Central Otago)": 3200,
 }
 
+# DUMMY: Default R-values and U-values
 R_VALUES_ROOF = {
     "Uninsulated": 0.5,
     "Basic (R2.0)": 2.0,
@@ -57,6 +62,7 @@ U_VALUES_WINDOWS = {
     "High performance triple": 1.0,
 }
 
+# DUMMY: Heating system efficiencies
 HEATING_SYSTEMS = {
     "None": 0,
     "Electric resistance": 1.0,
@@ -64,12 +70,14 @@ HEATING_SYSTEMS = {
     "Heat pump (COP 4.0)": 4.0,
 }
 
+# DUMMY: Hot water system efficiencies
 WATER_HEATING_SYSTEMS = {
     "Electric storage cylinder": 1.0,
     "Heat pump hot water (COP 2.5)": 2.5,
     "Heat pump hot water (COP 3.0)": 3.0,
 }
 
+# DUMMY: Water fixtures
 TOILET_TYPES = {
     "Single flush (9L)": 9.0,
     "Dual flush standard (6/3L avg 5L)": 5.0,
@@ -88,50 +96,55 @@ TAP_TYPES = {
     "Very efficient (4 L/min)": 4.0,
 }
 
+# DUMMY: Appliance defaults (numeric defaults are OK)
 WASHING_MACHINE_DEFAULTS = {"cyclesPerWeek": 4, "energyPerCycle": 0.8, "waterPerCycle": 60}
 DISHWASHER_DEFAULTS = {"cyclesPerWeek": 4, "energyPerCycle": 1.0, "waterPerCycle": 12}
 COOKING_DEFAULTS = {"mealsPerWeek": 14, "energyPerMeal": 0.5}
 LIGHTING_DEFAULTS = {"numberOfLights": 15, "wattsPerLight": 10, "hoursPerDay": 5}
 
-GRID_EMISSION_FACTOR = 0.10      # kgCO2/kWh  - DUMMY
-ELECTRICITY_TARIFF = 0.30        # NZD/kWh    - DUMMY
-WATER_TARIFF = 2.50              # NZD/m³     - DUMMY
-WATER_EMISSION_FACTOR = 0.63     # kgCO2/m³   - DUMMY
+# DUMMY: Grid emission factor and tariff
+GRID_EMISSION_FACTOR = 0.10  # kgCO2/kWh - DUMMY
+ELECTRICITY_TARIFF = 0.30    # NZD/kWh - DUMMY
+WATER_TARIFF = 2.50          # NZD/m³ - DUMMY
+WATER_EMISSION_FACTOR = 0.63 # kgCO2/m³ - DUMMY
 
 # =============================================================================
-# CALCULATION FUNCTIONS
+# CALCULATION FUNCTIONS (per spec)
 # =============================================================================
 
 def calculate_space_heating(inputs: dict) -> dict:
-    HDD = float(HDD_LOOKUP_BASE18[inputs["climateZone"]])
+    """
+    Spec 1.1: Steady-state heat loss + HDD conversion.
+    """
+    HDD = HDD_LOOKUP_BASE18[inputs["climateZone"]]
 
-    floor_area = float(inputs["floorArea"])
-    ceiling_height = float(inputs["ceilingHeight"])
-    window_area = float(inputs["windowArea"])
+    # Convert R to U
+    roofU = 1.0 / inputs["roofRValue"]
+    wallU = 1.0 / inputs["wallRValue"]
+    floorU = 1.0 / inputs["floorRValue"]
 
-    roof_r = float(inputs["roofRValue"])
-    wall_r = float(inputs["wallRValue"])
-    floor_r = float(inputs["floorRValue"])
-    window_u = float(inputs["windowUValue"])
+    # Areas (simplified square footprint)
+    floorArea = inputs["floorArea"]
+    ceilingHeight = inputs["ceilingHeight"]
+    windowArea = inputs["windowArea"]
+    roofArea = floorArea
+    perimeter = 4.0 * math.sqrt(floorArea)
+    wallArea = perimeter * ceilingHeight - windowArea
+    floorAreaCalc = floorArea
 
-    roof_u = 1.0 / roof_r
-    wall_u = 1.0 / wall_r
-    floor_u = 1.0 / floor_r
-
-    roof_area = floor_area
-    perimeter = 4.0 * math.sqrt(max(floor_area, 0.0))
-    wall_area = max(perimeter * ceiling_height - window_area, 0.0)
-
-    H_roof = roof_area * roof_u
-    H_wall = wall_area * wall_u
-    H_floor = floor_area * floor_u
-    H_window = window_area * window_u
+    # Heat loss coefficient H (W/K)
+    H_roof = roofArea * roofU
+    H_wall = wallArea * wallU
+    H_floor = floorAreaCalc * floorU
+    H_window = windowArea * inputs["windowUValue"]
     H_total = H_roof + H_wall + H_floor + H_window
 
-    Q_delivered = (H_total * HDD * 24.0) / 1000.0  # kWh/year
+    # Annual heating demand (delivered), kWh/year
+    Q_delivered = (H_total * HDD * 24.0) / 1000.0
 
-    system_eff = float(HEATING_SYSTEMS[inputs["heatingSystem"]])
-    Q_purchased = (Q_delivered / system_eff) if system_eff > 0 else 0.0
+    # Purchased energy (adjust for COP/efficiency)
+    eff = inputs["heatingSystemEfficiency"]
+    Q_purchased = (Q_delivered / eff) if eff and eff > 0 else 0.0
 
     return {
         "Q_delivered": Q_delivered,
@@ -141,55 +154,74 @@ def calculate_space_heating(inputs: dict) -> dict:
     }
 
 def calculate_water_heating(inputs: dict, advanced: dict) -> dict:
-    household_size = int(inputs["householdSize"])
-    system_eff = float(WATER_HEATING_SYSTEMS[inputs["waterHeatingSystem"]])
+    """
+    Spec 1.2: Volume × ΔT × cp.
+    """
+    householdSize = inputs["householdSize"]
+    L_per_person_day = advanced["hotWaterPerPersonPerDay"]
+    T_hot = advanced["hotWaterTemp"]
+    T_cold = advanced["coldWaterTemp"]
 
-    V_annual = household_size * float(advanced["hotWaterPerPersonPerDay"]) * 365.0  # L/year
-    deltaT = max(float(advanced["hotWaterTemp"]) - float(advanced["coldWaterTemp"]), 0.0)
+    V_annual = householdSize * L_per_person_day * 365.0  # L/year
+    deltaT = T_hot - T_cold
 
-    specific_heat = 4.186  # kJ/kg·°C
-    Q_delivered = (V_annual * deltaT * specific_heat) / 3600.0  # kWh/year
-    Q_purchased = (Q_delivered / system_eff) if system_eff > 0 else Q_delivered
+    specificHeat = 4.186  # kJ/kg·°C
+    Q_delivered = (V_annual * deltaT * specificHeat) / 3600.0  # kWh/year
+
+    eff = inputs["waterHeatingEfficiency"]
+    Q_purchased = (Q_delivered / eff) if eff and eff > 0 else Q_delivered
 
     return {"Q_delivered": Q_delivered, "Q_purchased": Q_purchased, "V_annual": V_annual}
 
 def calculate_lighting_and_appliances(inputs: dict) -> dict:
+    """
+    Spec 1.3: usage × intensity
+    """
     lighting = inputs["lighting"]
     washing = inputs["washingMachine"]
     dish = inputs["dishwasher"]
     cooking = inputs["cooking"]
 
     Q_lighting = (lighting["numberOfLights"] * lighting["wattsPerLight"] * lighting["hoursPerDay"] * 365.0) / 1000.0
-    Q_wash = (washing["cyclesPerWeek"] * washing["energyPerCycle"] * 52.0) if washing["hasAppliance"] else 0.0
-    Q_dish = (dish["cyclesPerWeek"] * dish["energyPerCycle"] * 52.0) if dish["hasAppliance"] else 0.0
+
+    Q_wash = washing["cyclesPerWeek"] * washing["energyPerCycle"] * 52.0 if washing["hasAppliance"] else 0.0
+    Q_dish = dish["cyclesPerWeek"] * dish["energyPerCycle"] * 52.0 if dish["hasAppliance"] else 0.0
     Q_cook = cooking["mealsPerWeek"] * cooking["energyPerMeal"] * 52.0
 
     Q_total = Q_lighting + Q_wash + Q_dish + Q_cook
-    return {"Q_total": Q_total, "breakdown": {"Q_lighting": Q_lighting, "Q_wash": Q_wash, "Q_dish": Q_dish, "Q_cook": Q_cook}}
+
+    return {
+        "Q_total": Q_total,
+        "breakdown": {"Q_lighting": Q_lighting, "Q_wash": Q_wash, "Q_dish": Q_dish, "Q_cook": Q_cook},
+    }
 
 def calculate_water_consumption(inputs: dict, advanced: dict) -> dict:
-    household_size = int(inputs["householdSize"])
+    """
+    Spec 2: end-use breakdown (m³/year)
+    """
+    n = inputs["householdSize"]
 
-    toilet_L = float(TOILET_TYPES[inputs["toiletType"]])
-    shower_flow = float(SHOWER_TYPES[inputs["showerType"]])
-    tap_flow = float(TAP_TYPES[inputs["tapType"]])
+    toiletLPerFlush = TOILET_TYPES[inputs["toiletType"]]
+    showerFlowRate = SHOWER_TYPES[inputs["showerType"]]
+    tapFlowRate = TAP_TYPES[inputs["tapType"]]
 
-    toilet_flushes = float(advanced["toiletFlushesPerDay"])
-    showers_per_day = float(advanced["showersPerDay"])
-    shower_minutes = float(advanced["showerMinutes"])
-    tap_minutes = float(advanced["tapMinutesPerDay"])
+    toiletFlushesPerDay = advanced["toiletFlushesPerDay"]
+    showersPerDay = advanced["showersPerDay"]
+    showerMinutes = advanced["showerMinutes"]
+    tapMinutesPerDay = advanced["tapMinutesPerDay"]
 
-    V_toilet_L = household_size * toilet_flushes * toilet_L * 365.0
-    V_shower_L = household_size * showers_per_day * shower_minutes * shower_flow * 365.0
-    V_taps_L = household_size * tap_minutes * tap_flow * 365.0
+    V_toilet_L = n * toiletFlushesPerDay * toiletLPerFlush * 365.0
+    V_shower_L = n * showersPerDay * showerMinutes * showerFlowRate * 365.0
+    V_taps_L = n * tapMinutesPerDay * tapFlowRate * 365.0
 
     washing = inputs["washingMachine"]
     dish = inputs["dishwasher"]
 
-    V_laundry_L = (washing["cyclesPerWeek"] * washing["waterPerCycle"] * 52.0) if washing["hasAppliance"] else 0.0
-    V_dish_L = (dish["cyclesPerWeek"] * dish["waterPerCycle"] * 52.0) if dish["hasAppliance"] else 0.0
+    V_laundry_L = washing["cyclesPerWeek"] * washing["waterPerCycle"] * 52.0 if washing["hasAppliance"] else 0.0
+    V_dishwasher_L = dish["cyclesPerWeek"] * dish["waterPerCycle"] * 52.0 if dish["hasAppliance"] else 0.0
 
-    V_total_m3 = (V_toilet_L + V_shower_L + V_taps_L + V_laundry_L + V_dish_L) / 1000.0
+    V_total_m3 = (V_toilet_L + V_shower_L + V_taps_L + V_laundry_L + V_dishwasher_L) / 1000.0
+
     return {
         "V_total": V_total_m3,
         "breakdown": {
@@ -197,469 +229,723 @@ def calculate_water_consumption(inputs: dict, advanced: dict) -> dict:
             "V_shower": V_shower_L / 1000.0,
             "V_taps": V_taps_L / 1000.0,
             "V_laundry": V_laundry_L / 1000.0,
-            "V_dishwasher": V_dish_L / 1000.0,
+            "V_dishwasher": V_dishwasher_L / 1000.0,
         },
     }
 
-def calculate_operational_carbon(total_electricity_kWh: float, total_water_m3: float) -> dict:
-    CO2_elec = total_electricity_kWh * GRID_EMISSION_FACTOR
+def calculate_operational_carbon(total_electricity_kwh: float, total_water_m3: float) -> dict:
+    """
+    Spec 3: activity × EF
+    """
+    CO2_electricity = total_electricity_kwh * GRID_EMISSION_FACTOR
     CO2_water = total_water_m3 * WATER_EMISSION_FACTOR
-    return {"CO2_total": CO2_elec + CO2_water, "CO2_electricity": CO2_elec, "CO2_water": CO2_water}
+    return {"CO2_total": CO2_electricity + CO2_water, "CO2_electricity": CO2_electricity, "CO2_water": CO2_water}
 
-def calculate_costs(total_electricity_kWh: float, total_water_m3: float) -> dict:
-    cost_e = total_electricity_kWh * ELECTRICITY_TARIFF
-    cost_w = total_water_m3 * WATER_TARIFF
-    return {"cost_total": cost_e + cost_w, "cost_electricity": cost_e, "cost_water": cost_w}
+def calculate_costs(total_electricity_kwh: float, total_water_m3: float) -> dict:
+    """
+    Spec 4.2: operating costs
+    """
+    cost_electricity = total_electricity_kwh * ELECTRICITY_TARIFF
+    cost_water = total_water_m3 * WATER_TARIFF
+    return {"cost_total": cost_electricity + cost_water, "cost_electricity": cost_electricity, "cost_water": cost_water}
 
 def calculate_scenario(inputs: dict, advanced: dict) -> dict:
     space = calculate_space_heating(inputs)
     water_heat = calculate_water_heating(inputs, advanced)
-    lighting_apps = calculate_lighting_and_appliances(inputs)
+    other = calculate_lighting_and_appliances(inputs)
+    water_use = calculate_water_consumption(inputs, advanced)
 
-    total_electricity = space["Q_purchased"] + water_heat["Q_purchased"] + lighting_apps["Q_total"]
-    water = calculate_water_consumption(inputs, advanced)
-    carbon = calculate_operational_carbon(total_electricity, water["V_total"])
-    costs = calculate_costs(total_electricity, water["V_total"])
+    total_electricity = space["Q_purchased"] + water_heat["Q_purchased"] + other["Q_total"]
+    carbon = calculate_operational_carbon(total_electricity, water_use["V_total"])
+    costs = calculate_costs(total_electricity, water_use["V_total"])
 
-    floor_area = max(float(inputs["floorArea"]), 1e-9)
-    energy_intensity = total_electricity / floor_area
+    energy_intensity = (total_electricity / inputs["floorArea"]) if inputs["floorArea"] > 0 else 0.0
 
     return {
         "spaceHeating": space,
         "waterHeating": water_heat,
-        "lightingAppliances": lighting_apps,
+        "lightingAppliances": other,
+        "waterConsumption": water_use,
         "totalElectricity": total_electricity,
-        "waterConsumption": water,
         "carbon": carbon,
         "costs": costs,
         "energyIntensity": energy_intensity,
     }
 
 # =============================================================================
-# STATE HELPERS
+# STATE / UTIL
 # =============================================================================
 
-def create_default_scenario_blank_choices() -> dict:
-    # Numeric defaults exist; categorical choices start BLANK (None)
+def _stable_hash(obj: dict) -> str:
+    s = json.dumps(obj, sort_keys=True, default=str)
+    return hashlib.sha256(s.encode("utf-8")).hexdigest()
+
+def init_defaults():
+    # Advanced (numeric defaults OK)
+    st.session_state.setdefault("adv_hotWaterPerPersonPerDay", 50.0)
+    st.session_state.setdefault("adv_hotWaterTemp", 60.0)
+    st.session_state.setdefault("adv_coldWaterTemp", 15.0)
+    st.session_state.setdefault("adv_toiletFlushesPerDay", 5.0)
+    st.session_state.setdefault("adv_showersPerDay", 1.0)
+    st.session_state.setdefault("adv_showerMinutes", 8.0)
+    st.session_state.setdefault("adv_tapMinutesPerDay", 10.0)
+
+    # Scenario numeric defaults OK
+    for p in ["b", "o"]:
+        st.session_state.setdefault(f"{p}_floorArea", 120.0)
+        st.session_state.setdefault(f"{p}_ceilingHeight", 2.4)
+        st.session_state.setdefault(f"{p}_householdSize", 3)
+
+        st.session_state.setdefault(f"{p}_windowArea", 30.0)
+
+        st.session_state.setdefault(f"{p}_light_n", LIGHTING_DEFAULTS["numberOfLights"])
+        st.session_state.setdefault(f"{p}_light_watts", LIGHTING_DEFAULTS["wattsPerLight"])
+        st.session_state.setdefault(f"{p}_light_hours", LIGHTING_DEFAULTS["hoursPerDay"])
+
+        st.session_state.setdefault(f"{p}_wash_cycles", WASHING_MACHINE_DEFAULTS["cyclesPerWeek"])
+        st.session_state.setdefault(f"{p}_wash_kwh", WASHING_MACHINE_DEFAULTS["energyPerCycle"])
+        st.session_state.setdefault(f"{p}_wash_L", WASHING_MACHINE_DEFAULTS["waterPerCycle"])
+
+        st.session_state.setdefault(f"{p}_dish_cycles", DISHWASHER_DEFAULTS["cyclesPerWeek"])
+        st.session_state.setdefault(f"{p}_dish_kwh", DISHWASHER_DEFAULTS["energyPerCycle"])
+        st.session_state.setdefault(f"{p}_dish_L", DISHWASHER_DEFAULTS["waterPerCycle"])
+
+        st.session_state.setdefault(f"{p}_cook_meals", COOKING_DEFAULTS["mealsPerWeek"])
+        st.session_state.setdefault(f"{p}_cook_kwh", COOKING_DEFAULTS["energyPerMeal"])
+
+    # Scenario categorical defaults MUST be unselected
+    cat_keys = [
+        "climateZone",
+        "roofRLabel",
+        "wallRLabel",
+        "floorRLabel",
+        "windowULabel",
+        "heatingSystem",
+        "waterHeatingSystem",
+        "toiletType",
+        "showerType",
+        "tapType",
+        "wash_has",
+        "dish_has",
+    ]
+    for p in ["b", "o"]:
+        for k in cat_keys:
+            st.session_state.setdefault(f"{p}_{k}", PLACEHOLDER)
+
+    # Result caching
+    st.session_state.setdefault("has_calculated", False)
+    st.session_state.setdefault("last_payload", None)     # snapshot (inputs + results)
+    st.session_state.setdefault("last_signature", None)   # hash(signature)
+    st.session_state.setdefault("show_advanced", False)
+
+def get_advanced_settings() -> dict:
     return {
-        "climateZone": None,
-        "floorArea": 120.0,
-        "ceilingHeight": 2.4,
-        "householdSize": 3,
+        "hotWaterPerPersonPerDay": float(st.session_state["adv_hotWaterPerPersonPerDay"]),
+        "hotWaterTemp": float(st.session_state["adv_hotWaterTemp"]),
+        "coldWaterTemp": float(st.session_state["adv_coldWaterTemp"]),
+        "toiletFlushesPerDay": float(st.session_state["adv_toiletFlushesPerDay"]),
+        "showersPerDay": float(st.session_state["adv_showersPerDay"]),
+        "showerMinutes": float(st.session_state["adv_showerMinutes"]),
+        "tapMinutesPerDay": float(st.session_state["adv_tapMinutesPerDay"]),
+    }
 
-        "roofRValueLabel": None,
-        "roofRValue": None,
-        "wallRValueLabel": None,
-        "wallRValue": None,
-        "floorRValueLabel": None,
-        "floorRValue": None,
+def _yn_to_bool(v: str):
+    if v == "Yes":
+        return True
+    if v == "No":
+        return False
+    return None
 
-        "windowUValueLabel": None,
-        "windowUValue": None,
-        "windowArea": 30.0,
+def get_scenario(prefix: str) -> dict:
+    """
+    Read a scenario from session_state, mapping labels -> numeric coefficients.
+    If any required categorical input is PLACEHOLDER, store None in the scenario and let validation handle it.
+    """
+    climateZone = st.session_state[f"{prefix}_climateZone"]
+    roof_label = st.session_state[f"{prefix}_roofRLabel"]
+    wall_label = st.session_state[f"{prefix}_wallRLabel"]
+    floor_label = st.session_state[f"{prefix}_floorRLabel"]
+    win_label = st.session_state[f"{prefix}_windowULabel"]
+    heat_sys = st.session_state[f"{prefix}_heatingSystem"]
+    hw_sys = st.session_state[f"{prefix}_waterHeatingSystem"]
+    toilet = st.session_state[f"{prefix}_toiletType"]
+    shower = st.session_state[f"{prefix}_showerType"]
+    tap = st.session_state[f"{prefix}_tapType"]
 
-        "heatingSystem": None,
-        "waterHeatingSystem": None,
+    wash_has = _yn_to_bool(st.session_state[f"{prefix}_wash_has"])
+    dish_has = _yn_to_bool(st.session_state[f"{prefix}_dish_has"])
 
-        "toiletType": None,
-        "showerType": None,
-        "tapType": None,
+    # Map labels to values when selected
+    def map_r(label, lookup):
+        if label == PLACEHOLDER:
+            return None
+        return float(lookup[label])
+
+    def map_u(label, lookup):
+        if label == PLACEHOLDER:
+            return None
+        return float(lookup[label])
+
+    def map_eff(label, lookup):
+        if label == PLACEHOLDER:
+            return None
+        return float(lookup[label])
+
+    scenario = {
+        "climateZone": None if climateZone == PLACEHOLDER else climateZone,
+        "floorArea": float(st.session_state[f"{prefix}_floorArea"]),
+        "ceilingHeight": float(st.session_state[f"{prefix}_ceilingHeight"]),
+        "householdSize": int(st.session_state[f"{prefix}_householdSize"]),
+
+        "roofRValue": map_r(roof_label, R_VALUES_ROOF),
+        "wallRValue": map_r(wall_label, R_VALUES_WALLS),
+        "floorRValue": map_r(floor_label, R_VALUES_FLOOR),
+        "windowUValue": map_u(win_label, U_VALUES_WINDOWS),
+
+        "windowArea": float(st.session_state[f"{prefix}_windowArea"]),
+
+        "heatingSystemEfficiency": map_eff(heat_sys, HEATING_SYSTEMS),
+        "waterHeatingEfficiency": map_eff(hw_sys, WATER_HEATING_SYSTEMS),
+
+        "toiletType": None if toilet == PLACEHOLDER else toilet,
+        "showerType": None if shower == PLACEHOLDER else shower,
+        "tapType": None if tap == PLACEHOLDER else tap,
 
         "lighting": {
-            "numberOfLights": LIGHTING_DEFAULTS["numberOfLights"],
-            "wattsPerLight": LIGHTING_DEFAULTS["wattsPerLight"],
-            "hoursPerDay": LIGHTING_DEFAULTS["hoursPerDay"],
+            "numberOfLights": int(st.session_state[f"{prefix}_light_n"]),
+            "wattsPerLight": float(st.session_state[f"{prefix}_light_watts"]),
+            "hoursPerDay": float(st.session_state[f"{prefix}_light_hours"]),
         },
-
-        # Appliances default NOT selected
         "washingMachine": {
-            "hasAppliance": False,
-            "cyclesPerWeek": WASHING_MACHINE_DEFAULTS["cyclesPerWeek"],
-            "energyPerCycle": WASHING_MACHINE_DEFAULTS["energyPerCycle"],
-            "waterPerCycle": WASHING_MACHINE_DEFAULTS["waterPerCycle"],
+            "hasAppliance": wash_has,
+            "cyclesPerWeek": float(st.session_state[f"{prefix}_wash_cycles"]),
+            "energyPerCycle": float(st.session_state[f"{prefix}_wash_kwh"]),
+            "waterPerCycle": float(st.session_state[f"{prefix}_wash_L"]),
         },
         "dishwasher": {
-            "hasAppliance": False,
-            "cyclesPerWeek": DISHWASHER_DEFAULTS["cyclesPerWeek"],
-            "energyPerCycle": DISHWASHER_DEFAULTS["energyPerCycle"],
-            "waterPerCycle": DISHWASHER_DEFAULTS["waterPerCycle"],
+            "hasAppliance": dish_has,
+            "cyclesPerWeek": float(st.session_state[f"{prefix}_dish_cycles"]),
+            "energyPerCycle": float(st.session_state[f"{prefix}_dish_kwh"]),
+            "waterPerCycle": float(st.session_state[f"{prefix}_dish_L"]),
         },
         "cooking": {
-            "mealsPerWeek": COOKING_DEFAULTS["mealsPerWeek"],
-            "energyPerMeal": COOKING_DEFAULTS["energyPerMeal"],
+            "mealsPerWeek": float(st.session_state[f"{prefix}_cook_meals"]),
+            "energyPerMeal": float(st.session_state[f"{prefix}_cook_kwh"]),
+        },
+        # Keep original labels too (for debugging / transparency)
+        "_labels": {
+            "roofRLabel": roof_label,
+            "wallRLabel": wall_label,
+            "floorRLabel": floor_label,
+            "windowULabel": win_label,
+            "heatingSystem": heat_sys,
+            "waterHeatingSystem": hw_sys,
+            "wash_has": st.session_state[f"{prefix}_wash_has"],
+            "dish_has": st.session_state[f"{prefix}_dish_has"],
         },
     }
+    return scenario
 
-def scenario_ready(s: dict) -> bool:
-    required = [
-        "climateZone",
-        "roofRValue", "wallRValue", "floorRValue", "windowUValue",
-        "heatingSystem", "waterHeatingSystem",
-        "toiletType", "showerType", "tapType",
+def validate_scenario(s: dict) -> list:
+    """
+    Returns list of missing fields (human-readable).
+    """
+    missing = []
+    if s["climateZone"] is None:
+        missing.append("Climate zone")
+    if s["roofRValue"] is None:
+        missing.append("Roof insulation (R-value)")
+    if s["wallRValue"] is None:
+        missing.append("Wall insulation (R-value)")
+    if s["floorRValue"] is None:
+        missing.append("Floor insulation (R-value)")
+    if s["windowUValue"] is None:
+        missing.append("Window type (U-value)")
+    if s["heatingSystemEfficiency"] is None:
+        missing.append("Space heating system")
+    if s["waterHeatingEfficiency"] is None:
+        missing.append("Water heating system")
+    if s["toiletType"] is None:
+        missing.append("Toilet type")
+    if s["showerType"] is None:
+        missing.append("Shower type")
+    if s["tapType"] is None:
+        missing.append("Tap type")
+
+    if s["washingMachine"]["hasAppliance"] is None:
+        missing.append("Washing machine (Yes/No)")
+    if s["dishwasher"]["hasAppliance"] is None:
+        missing.append("Dishwasher (Yes/No)")
+
+    return missing
+
+def copy_baseline_to_option():
+    """
+    Copy ALL baseline widgets to option widgets (full copy).
+    """
+    mappings = [
+        # categorical
+        ("b_climateZone", "o_climateZone"),
+        ("b_roofRLabel", "o_roofRLabel"),
+        ("b_wallRLabel", "o_wallRLabel"),
+        ("b_floorRLabel", "o_floorRLabel"),
+        ("b_windowULabel", "o_windowULabel"),
+        ("b_heatingSystem", "o_heatingSystem"),
+        ("b_waterHeatingSystem", "o_waterHeatingSystem"),
+        ("b_toiletType", "o_toiletType"),
+        ("b_showerType", "o_showerType"),
+        ("b_tapType", "o_tapType"),
+        ("b_wash_has", "o_wash_has"),
+        ("b_dish_has", "o_dish_has"),
+
+        # numeric / inputs
+        ("b_floorArea", "o_floorArea"),
+        ("b_ceilingHeight", "o_ceilingHeight"),
+        ("b_householdSize", "o_householdSize"),
+        ("b_windowArea", "o_windowArea"),
+
+        # lighting
+        ("b_light_n", "o_light_n"),
+        ("b_light_watts", "o_light_watts"),
+        ("b_light_hours", "o_light_hours"),
+
+        # washing machine
+        ("b_wash_cycles", "o_wash_cycles"),
+        ("b_wash_kwh", "o_wash_kwh"),
+        ("b_wash_L", "o_wash_L"),
+
+        # dishwasher
+        ("b_dish_cycles", "o_dish_cycles"),
+        ("b_dish_kwh", "o_dish_kwh"),
+        ("b_dish_L", "o_dish_L"),
+
+        # cooking
+        ("b_cook_meals", "o_cook_meals"),
+        ("b_cook_kwh", "o_cook_kwh"),
     ]
-    return all(s.get(k) is not None for k in required)
+    for src, dst in mappings:
+        st.session_state[dst] = copy.deepcopy(st.session_state[src])
 
-def stable_hash(obj) -> str:
-    return json.dumps(obj, sort_keys=True, default=str)
-
-def _pct(base: float, opt: float) -> float:
-    return 0.0 if abs(base) < 1e-12 else ((base - opt) / base) * 100.0
-
-def _trend_arrow(opt: float, base: float) -> str:
-    d = opt - base
-    if abs(d) < 1e-9:
-        return "→"
-    return "↓" if d < 0 else "↑"
-
-def fmt(val: float, decimals: int = 1) -> str:
-    return f"{val:,.{decimals}f}"
-
-def fmt0(val: float) -> str:
-    return f"{val:,.0f}"
+    # Force recalculation requirement
+    st.session_state["has_calculated"] = False
+    st.session_state["last_payload"] = None
+    st.session_state["last_signature"] = None
 
 # =============================================================================
-# STREAMLIT SETUP
+# UI HELPERS
 # =============================================================================
 
-st.set_page_config(page_title="NZ Housing Sustainability Calculator (Streamlit)", layout="wide")
+def select_with_placeholder(label: str, options: list, key: str, help_text: str | None = None):
+    full = [PLACEHOLDER] + options
+    current = st.session_state.get(key, PLACEHOLDER)
+    idx = full.index(current) if current in full else 0
+    return st.selectbox(label, full, index=idx, key=key, help=help_text)
 
-if "advanced" not in st.session_state:
-    st.session_state.advanced = {
-        "hotWaterPerPersonPerDay": 50.0,  # DUMMY
-        "hotWaterTemp": 60.0,             # DUMMY
-        "coldWaterTemp": 15.0,            # DUMMY
-        "toiletFlushesPerDay": 5.0,       # DUMMY
-        "showersPerDay": 1.0,             # DUMMY
-        "showerMinutes": 8.0,             # DUMMY
-        "tapMinutesPerDay": 10.0,         # DUMMY
-    }
+def direction_arrow(delta: float) -> str:
+    if delta < 0:
+        return "▼"  # option lower than baseline
+    if delta > 0:
+        return "▲"
+    return "—"
 
-if "baseline" not in st.session_state:
-    st.session_state.baseline = create_default_scenario_blank_choices()
-
-if "option_enabled" not in st.session_state:
-    st.session_state.option_enabled = True  # keep comparison layout, but option can be left incomplete
-
-if "option" not in st.session_state:
-    st.session_state.option = create_default_scenario_blank_choices()
-
-if "show_advanced" not in st.session_state:
-    st.session_state.show_advanced = False
-
-if "has_calculated" not in st.session_state:
-    st.session_state.has_calculated = False
-
-if "last_calc_hash" not in st.session_state:
-    st.session_state.last_calc_hash = None
-
-if "last_payload" not in st.session_state:
-    st.session_state.last_payload = None
+def fmt_num(x: float, decimals: int = 1):
+    if x is None:
+        return "—"
+    return f"{x:,.{decimals}f}"
 
 # =============================================================================
-# UI: HEADER
+# APP
 # =============================================================================
+init_defaults()
 
-st.title("NZ Housing Sustainability Calculator (Streamlit)")
-st.write("Early-stage decision support tool for comparing housing scenarios. **Not a certification tool.**")
-st.caption("All coefficients in this prototype are DUMMY placeholders (as per your React).")
+st.title("NZ Housing Sustainability Calculator (Prototype)")
+st.write(
+    "Early-stage decision support for comparing housing scenarios. "
+    "**Not a certification tool.** Values and coefficients are placeholders unless you replace them."
+)
 
-top = st.columns([1.0, 1.0, 2.5], gap="medium")
-with top[0]:
-    st.session_state.show_advanced = st.toggle("Show Advanced Settings", value=st.session_state.show_advanced)
-with top[1]:
-    if st.button("Reset Option", use_container_width=True):
-        st.session_state.option = create_default_scenario_blank_choices()
-        st.session_state.has_calculated = False
-with top[2]:
-    st.info(
-        f"Assumptions (DUMMY): Grid EF={GRID_EMISSION_FACTOR} kgCO₂/kWh | Water EF={WATER_EMISSION_FACTOR} kgCO₂/m³ | "
-        f"Tariffs: {ELECTRICITY_TARIFF} NZD/kWh, {WATER_TARIFF} NZD/m³"
-    )
+# ---- Advanced settings (top; not inside scenario columns) ----
+with st.expander("Advanced settings (DUMMY defaults; optional overrides)", expanded=st.session_state["show_advanced"]):
+    st.session_state["show_advanced"] = True
+    st.number_input("Hot water demand (L/person/day)", min_value=0.0, max_value=300.0, step=1.0, key="adv_hotWaterPerPersonPerDay")
+    st.number_input("Hot water setpoint (°C)", min_value=30.0, max_value=80.0, step=1.0, key="adv_hotWaterTemp")
+    st.number_input("Cold water inlet temperature (°C)", min_value=0.0, max_value=30.0, step=1.0, key="adv_coldWaterTemp")
+    st.number_input("Toilet flushes/person/day", min_value=0.0, max_value=20.0, step=0.5, key="adv_toiletFlushesPerDay")
+    st.number_input("Showers/person/day", min_value=0.0, max_value=5.0, step=0.1, key="adv_showersPerDay")
+    st.number_input("Minutes/shower", min_value=0.0, max_value=60.0, step=0.5, key="adv_showerMinutes")
+    st.number_input("Tap minutes/person/day", min_value=0.0, max_value=120.0, step=0.5, key="adv_tapMinutesPerDay")
 
-if st.session_state.show_advanced:
-    with st.expander("Advanced Settings (DUMMY values - editable)", expanded=True):
-        adv = deepcopy(st.session_state.advanced)
-        adv["hotWaterPerPersonPerDay"] = st.number_input("Hot water (L/person/day)", 0.0, 300.0, float(adv["hotWaterPerPersonPerDay"]), 5.0)
-        adv["hotWaterTemp"] = st.number_input("Hot water temp (°C)", 30.0, 70.0, float(adv["hotWaterTemp"]), 1.0)
-        adv["coldWaterTemp"] = st.number_input("Cold water temp (°C)", 0.0, 30.0, float(adv["coldWaterTemp"]), 1.0)
-        adv["toiletFlushesPerDay"] = st.number_input("Toilet flushes/person/day", 0.0, 20.0, float(adv["toiletFlushesPerDay"]), 0.5)
-        adv["showersPerDay"] = st.number_input("Showers/person/day", 0.0, 5.0, float(adv["showersPerDay"]), 0.1)
-        adv["showerMinutes"] = st.number_input("Shower minutes", 0.0, 60.0, float(adv["showerMinutes"]), 1.0)
-        adv["tapMinutesPerDay"] = st.number_input("Tap minutes/person/day", 0.0, 60.0, float(adv["tapMinutesPerDay"]), 1.0)
-        st.session_state.advanced = adv
+adv = get_advanced_settings()
+
+# ---- Layout ----
+col_b, col_o, col_r = st.columns([1.05, 1.05, 1.30], gap="large")
 
 # =============================================================================
-# INPUT UI HELPERS
+# BASELINE COLUMN
 # =============================================================================
+with col_b:
+    st.subheader("Baseline")
 
-def select_or_blank(label, options, key, value, placeholder="Select..."):
-    if value is None:
-        return st.selectbox(label, options=options, index=None, placeholder=placeholder, key=key)
-    idx = options.index(value) if value in options else None
-    return st.selectbox(label, options=options, index=idx, key=key)
+    with st.expander("1) Basic information", expanded=True):
+        select_with_placeholder(
+            "Climate zone",
+            list(HDD_LOOKUP_BASE18.keys()),
+            key="b_climateZone",
+            help_text="HDD base 18°C shown only after you select a zone.",
+        )
+        if st.session_state["b_climateZone"] != PLACEHOLDER:
+            st.caption(f"HDD (base 18°C): **{HDD_LOOKUP_BASE18[st.session_state['b_climateZone']]}** (DUMMY)")
 
-def scenario_inputs_ui(title: str, prefix: str, scenario: dict) -> dict:
-    st.subheader(title)
+        st.number_input("Floor area (m²)", min_value=20.0, max_value=500.0, step=5.0, key="b_floorArea")
+        st.number_input("Ceiling height (m)", min_value=2.0, max_value=4.0, step=0.1, key="b_ceilingHeight")
+        st.number_input("Household size (people)", min_value=1, max_value=12, step=1, key="b_householdSize")
 
-    with st.expander("1. Basic Information", expanded=True):
-        cz_options = list(HDD_LOOKUP_BASE18.keys())
-        cz = select_or_blank("Climate Zone (DUMMY HDD lookup)", cz_options, f"{prefix}_climateZone", scenario.get("climateZone"))
-        st.caption(f"HDD (base 18°C): **{HDD_LOOKUP_BASE18[cz]}** (DUMMY)" if cz else "HDD (base 18°C): —")
+    with st.expander("1.1) Thermal envelope", expanded=False):
+        select_with_placeholder("Roof insulation (R-value)", list(R_VALUES_ROOF.keys()), key="b_roofRLabel")
+        if st.session_state["b_roofRLabel"] != PLACEHOLDER:
+            r = R_VALUES_ROOF[st.session_state["b_roofRLabel"]]
+            st.caption(f"R={r:.1f}, U={1/r:.2f} W/m²K")
 
-        floor_area = st.number_input("Floor Area (m²)", 20.0, 500.0, float(scenario["floorArea"]), 5.0, key=f"{prefix}_floorArea")
-        ceiling_height = st.number_input("Ceiling Height (m)", 2.0, 4.0, float(scenario["ceilingHeight"]), 0.1, key=f"{prefix}_ceilingHeight")
-        hh = st.number_input("Household Size", 1, 10, int(scenario["householdSize"]), 1, key=f"{prefix}_householdSize")
+        select_with_placeholder("Wall insulation (R-value)", list(R_VALUES_WALLS.keys()), key="b_wallRLabel")
+        if st.session_state["b_wallRLabel"] != PLACEHOLDER:
+            r = R_VALUES_WALLS[st.session_state["b_wallRLabel"]]
+            st.caption(f"R={r:.1f}, U={1/r:.2f} W/m²K")
 
-    with st.expander("1.1 Thermal Envelope", expanded=False):
-        roof_labels = list(R_VALUES_ROOF.keys())
-        wall_labels = list(R_VALUES_WALLS.keys())
-        floor_labels = list(R_VALUES_FLOOR.keys())
-        win_labels = list(U_VALUES_WINDOWS.keys())
+        select_with_placeholder("Floor insulation (R-value)", list(R_VALUES_FLOOR.keys()), key="b_floorRLabel")
+        if st.session_state["b_floorRLabel"] != PLACEHOLDER:
+            r = R_VALUES_FLOOR[st.session_state["b_floorRLabel"]]
+            st.caption(f"R={r:.1f}, U={1/r:.2f} W/m²K")
 
-        roof_label = select_or_blank("Roof Insulation (R-value)", roof_labels, f"{prefix}_roofRValueLabel", scenario.get("roofRValueLabel"))
-        roof_r = float(R_VALUES_ROOF[roof_label]) if roof_label else None
-        st.caption(f"R = {roof_r:.1f}, U = {1/roof_r:.2f} W/m²K (DUMMY)" if roof_r else "R/U: —")
+        select_with_placeholder("Window type (U-value)", list(U_VALUES_WINDOWS.keys()), key="b_windowULabel")
+        if st.session_state["b_windowULabel"] != PLACEHOLDER:
+            u = U_VALUES_WINDOWS[st.session_state["b_windowULabel"]]
+            st.caption(f"U={u:.1f} W/m²K")
 
-        wall_label = select_or_blank("Wall Insulation (R-value)", wall_labels, f"{prefix}_wallRValueLabel", scenario.get("wallRValueLabel"))
-        wall_r = float(R_VALUES_WALLS[wall_label]) if wall_label else None
-        st.caption(f"R = {wall_r:.1f}, U = {1/wall_r:.2f} W/m²K (DUMMY)" if wall_r else "R/U: —")
+        st.number_input("Total window area (m²)", min_value=0.0, max_value=200.0, step=5.0, key="b_windowArea")
 
-        floor_label = select_or_blank("Floor Insulation (R-value)", floor_labels, f"{prefix}_floorRValueLabel", scenario.get("floorRValueLabel"))
-        floor_r = float(R_VALUES_FLOOR[floor_label]) if floor_label else None
-        st.caption(f"R = {floor_r:.1f}, U = {1/floor_r:.2f} W/m²K (DUMMY)" if floor_r else "R/U: —")
+    with st.expander("1.1.4) Space heating system", expanded=False):
+        select_with_placeholder("Heating system", list(HEATING_SYSTEMS.keys()), key="b_heatingSystem")
+        if st.session_state["b_heatingSystem"] != PLACEHOLDER:
+            st.caption(f"Efficiency/COP: **{HEATING_SYSTEMS[st.session_state['b_heatingSystem']]}** (DUMMY)")
 
-        win_label = select_or_blank("Window Type (U-value)", win_labels, f"{prefix}_windowUValueLabel", scenario.get("windowUValueLabel"))
-        win_u = float(U_VALUES_WINDOWS[win_label]) if win_label else None
-        st.caption(f"U = {win_u:.1f} W/m²K (DUMMY)" if win_u else "U: —")
+    with st.expander("1.2) Water heating system", expanded=False):
+        select_with_placeholder("Water heating system", list(WATER_HEATING_SYSTEMS.keys()), key="b_waterHeatingSystem")
+        if st.session_state["b_waterHeatingSystem"] != PLACEHOLDER:
+            st.caption(f"Efficiency/COP: **{WATER_HEATING_SYSTEMS[st.session_state['b_waterHeatingSystem']]}** (DUMMY)")
 
-        window_area = st.number_input("Total Window Area (m²)", 5.0, 100.0, float(scenario["windowArea"]), 5.0, key=f"{prefix}_windowArea")
-        st.caption(f"~{(window_area / float(floor_area) * 100.0):.0f}% of floor area" if float(floor_area) > 0 else "")
+    with st.expander("1.3) Lighting & appliances", expanded=False):
+        st.markdown("**Lighting**")
+        st.number_input("Number of lights", min_value=0, max_value=200, step=1, key="b_light_n")
+        st.number_input("Watts per light", min_value=0.0, max_value=200.0, step=1.0, key="b_light_watts")
+        st.number_input("Lighting hours/day", min_value=0.0, max_value=24.0, step=0.5, key="b_light_hours")
 
-    with st.expander("1.1.4 Space Heating System", expanded=False):
-        hs_options = list(HEATING_SYSTEMS.keys())
-        hs = select_or_blank("Heating System Type (efficiency/COP)", hs_options, f"{prefix}_heatingSystem", scenario.get("heatingSystem"))
-        st.caption(f"Efficiency/COP: **{HEATING_SYSTEMS[hs]}** (DUMMY)" if hs else "Efficiency/COP: —")
-
-    with st.expander("1.2 Water Heating System", expanded=False):
-        whs_options = list(WATER_HEATING_SYSTEMS.keys())
-        whs = select_or_blank("Water Heating Type (efficiency/COP)", whs_options, f"{prefix}_waterHeatingSystem", scenario.get("waterHeatingSystem"))
-        st.caption(f"Efficiency/COP: **{WATER_HEATING_SYSTEMS[whs]}** (DUMMY)" if whs else "Efficiency/COP: —")
-
-    with st.expander("1.3 Lighting & Appliances", expanded=False):
-        n_lights = st.number_input("# Lights", 0, 200, int(scenario["lighting"]["numberOfLights"]), 1, key=f"{prefix}_lighting_numberOfLights")
-        watts_per_light = st.number_input("Watts per light", 0.0, 200.0, float(scenario["lighting"]["wattsPerLight"]), 1.0, key=f"{prefix}_lighting_wattsPerLight")
-        hours_per_day = st.number_input("Lighting hours/day", 0.0, 24.0, float(scenario["lighting"]["hoursPerDay"]), 0.5, key=f"{prefix}_lighting_hoursPerDay")
-
-        st.markdown("**Washing Machine**")
-        has_washer = st.checkbox("Has washing machine", value=bool(scenario["washingMachine"]["hasAppliance"]), key=f"{prefix}_washing_hasAppliance")
-        if has_washer:
-            wash_cycles = st.number_input("Cycles/week (washing)", 0.0, 30.0, float(scenario["washingMachine"]["cyclesPerWeek"]), 1.0, key=f"{prefix}_washing_cyclesPerWeek")
-            wash_kwh = st.number_input("kWh/cycle (washing)", 0.0, 10.0, float(scenario["washingMachine"]["energyPerCycle"]), 0.1, key=f"{prefix}_washing_energyPerCycle")
-            wash_L = st.number_input("L/cycle (washing)", 0.0, 300.0, float(scenario["washingMachine"]["waterPerCycle"]), 5.0, key=f"{prefix}_washing_waterPerCycle")
-        else:
-            wash_cycles, wash_kwh, wash_L = 0.0, 0.0, 0.0
+        st.markdown("**Washing machine**")
+        select_with_placeholder("Has washing machine?", ["Yes", "No"], key="b_wash_has")
+        if st.session_state["b_wash_has"] == "Yes":
+            st.number_input("Cycles/week (washing)", min_value=0.0, max_value=50.0, step=1.0, key="b_wash_cycles")
+            st.number_input("kWh/cycle (washing)", min_value=0.0, max_value=10.0, step=0.1, key="b_wash_kwh")
+            st.number_input("L/cycle (washing)", min_value=0.0, max_value=300.0, step=5.0, key="b_wash_L")
 
         st.markdown("**Dishwasher**")
-        has_dish = st.checkbox("Has dishwasher", value=bool(scenario["dishwasher"]["hasAppliance"]), key=f"{prefix}_dish_hasAppliance")
-        if has_dish:
-            dish_cycles = st.number_input("Cycles/week (dishwasher)", 0.0, 30.0, float(scenario["dishwasher"]["cyclesPerWeek"]), 1.0, key=f"{prefix}_dish_cyclesPerWeek")
-            dish_kwh = st.number_input("kWh/cycle (dishwasher)", 0.0, 10.0, float(scenario["dishwasher"]["energyPerCycle"]), 0.1, key=f"{prefix}_dish_energyPerCycle")
-            dish_L = st.number_input("L/cycle (dishwasher)", 0.0, 200.0, float(scenario["dishwasher"]["waterPerCycle"]), 1.0, key=f"{prefix}_dish_waterPerCycle")
-        else:
-            dish_cycles, dish_kwh, dish_L = 0.0, 0.0, 0.0
+        select_with_placeholder("Has dishwasher?", ["Yes", "No"], key="b_dish_has")
+        if st.session_state["b_dish_has"] == "Yes":
+            st.number_input("Cycles/week (dishwasher)", min_value=0.0, max_value=50.0, step=1.0, key="b_dish_cycles")
+            st.number_input("kWh/cycle (dishwasher)", min_value=0.0, max_value=10.0, step=0.1, key="b_dish_kwh")
+            st.number_input("L/cycle (dishwasher)", min_value=0.0, max_value=100.0, step=1.0, key="b_dish_L")
 
         st.markdown("**Cooking**")
-        meals_wk = st.number_input("Meals/week", 0.0, 100.0, float(scenario["cooking"]["mealsPerWeek"]), 1.0, key=f"{prefix}_cooking_mealsPerWeek")
-        kwh_meal = st.number_input("kWh/meal", 0.0, 10.0, float(scenario["cooking"]["energyPerMeal"]), 0.1, key=f"{prefix}_cooking_energyPerMeal")
+        st.number_input("Meals/week", min_value=0.0, max_value=100.0, step=1.0, key="b_cook_meals")
+        st.number_input("kWh/meal", min_value=0.0, max_value=10.0, step=0.1, key="b_cook_kwh")
 
-    with st.expander("2. Water Fixtures", expanded=False):
-        toilet_options = list(TOILET_TYPES.keys())
-        shower_options = list(SHOWER_TYPES.keys())
-        tap_options = list(TAP_TYPES.keys())
+    with st.expander("2) Water fixtures", expanded=False):
+        select_with_placeholder("Toilet type", list(TOILET_TYPES.keys()), key="b_toiletType")
+        if st.session_state["b_toiletType"] != PLACEHOLDER:
+            st.caption(f"{TOILET_TYPES[st.session_state['b_toiletType']]} L/flush (DUMMY)")
 
-        toilet_type = select_or_blank("Toilet Type (L/flush)", toilet_options, f"{prefix}_toiletType", scenario.get("toiletType"))
-        st.caption(f"{TOILET_TYPES[toilet_type]} L/flush (DUMMY)" if toilet_type else "L/flush: —")
+        select_with_placeholder("Shower type", list(SHOWER_TYPES.keys()), key="b_showerType")
+        if st.session_state["b_showerType"] != PLACEHOLDER:
+            st.caption(f"{SHOWER_TYPES[st.session_state['b_showerType']]} L/min (DUMMY)")
 
-        shower_type = select_or_blank("Shower Type (L/min)", shower_options, f"{prefix}_showerType", scenario.get("showerType"))
-        st.caption(f"{SHOWER_TYPES[shower_type]} L/min (DUMMY)" if shower_type else "L/min: —")
+        select_with_placeholder("Tap type", list(TAP_TYPES.keys()), key="b_tapType")
+        if st.session_state["b_tapType"] != PLACEHOLDER:
+            st.caption(f"{TAP_TYPES[st.session_state['b_tapType']]} L/min (DUMMY)")
 
-        tap_type = select_or_blank("Tap Type (L/min)", tap_options, f"{prefix}_tapType", scenario.get("tapType"))
-        st.caption(f"{TAP_TYPES[tap_type]} L/min (DUMMY)" if tap_type else "L/min: —")
-
-    return {
-        "climateZone": cz,
-        "floorArea": float(floor_area),
-        "ceilingHeight": float(ceiling_height),
-        "householdSize": int(hh),
-
-        "roofRValueLabel": roof_label,
-        "roofRValue": float(roof_r) if roof_r is not None else None,
-        "wallRValueLabel": wall_label,
-        "wallRValue": float(wall_r) if wall_r is not None else None,
-        "floorRValueLabel": floor_label,
-        "floorRValue": float(floor_r) if floor_r is not None else None,
-
-        "windowUValueLabel": win_label,
-        "windowUValue": float(win_u) if win_u is not None else None,
-        "windowArea": float(window_area),
-
-        "heatingSystem": hs,
-        "waterHeatingSystem": whs,
-
-        "toiletType": toilet_type,
-        "showerType": shower_type,
-        "tapType": tap_type,
-
-        "lighting": {"numberOfLights": int(n_lights), "wattsPerLight": float(watts_per_light), "hoursPerDay": float(hours_per_day)},
-        "washingMachine": {"hasAppliance": bool(has_washer), "cyclesPerWeek": float(wash_cycles), "energyPerCycle": float(wash_kwh), "waterPerCycle": float(wash_L)},
-        "dishwasher": {"hasAppliance": bool(has_dish), "cyclesPerWeek": float(dish_cycles), "energyPerCycle": float(dish_kwh), "waterPerCycle": float(dish_L)},
-        "cooking": {"mealsPerWeek": float(meals_wk), "energyPerMeal": float(kwh_meal)},
-    }
+    # COPY BUTTON AT BOTTOM (as requested)
+    st.divider()
+    if st.button("Copy Baseline → Option", use_container_width=True):
+        copy_baseline_to_option()
+        st.rerun()
 
 # =============================================================================
-# LAYOUT: Baseline | Option | Results
+# OPTION COLUMN
 # =============================================================================
+with col_o:
+    st.subheader("Option")
 
-col_base, col_opt, col_res = st.columns([1.05, 1.05, 1.45], gap="large")
+    with st.expander("1) Basic information", expanded=True):
+        select_with_placeholder("Climate zone", list(HDD_LOOKUP_BASE18.keys()), key="o_climateZone")
+        if st.session_state["o_climateZone"] != PLACEHOLDER:
+            st.caption(f"HDD (base 18°C): **{HDD_LOOKUP_BASE18[st.session_state['o_climateZone']]}** (DUMMY)")
 
-with col_base:
-    st.session_state.baseline = scenario_inputs_ui("Baseline Scenario", "BASE", st.session_state.baseline)
+        st.number_input("Floor area (m²)", min_value=20.0, max_value=500.0, step=5.0, key="o_floorArea")
+        st.number_input("Ceiling height (m)", min_value=2.0, max_value=4.0, step=0.1, key="o_ceilingHeight")
+        st.number_input("Household size (people)", min_value=1, max_value=12, step=1, key="o_householdSize")
 
-with col_opt:
-    opt_top = st.columns([1.2, 1.2], gap="small")
-    with opt_top[0]:
-        if st.button("Copy Baseline → Option", use_container_width=True):
-            st.session_state.option = deepcopy(st.session_state.baseline)
-            st.session_state.has_calculated = False
-    with opt_top[1]:
-        st.caption("Option dropdowns also start blank by default.")
-    st.session_state.option = scenario_inputs_ui("Option Scenario", "OPT", st.session_state.option)
+    with st.expander("1.1) Thermal envelope", expanded=False):
+        select_with_placeholder("Roof insulation (R-value)", list(R_VALUES_ROOF.keys()), key="o_roofRLabel")
+        if st.session_state["o_roofRLabel"] != PLACEHOLDER:
+            r = R_VALUES_ROOF[st.session_state["o_roofRLabel"]]
+            st.caption(f"R={r:.1f}, U={1/r:.2f} W/m²K")
+
+        select_with_placeholder("Wall insulation (R-value)", list(R_VALUES_WALLS.keys()), key="o_wallRLabel")
+        if st.session_state["o_wallRLabel"] != PLACEHOLDER:
+            r = R_VALUES_WALLS[st.session_state["o_wallRLabel"]]
+            st.caption(f"R={r:.1f}, U={1/r:.2f} W/m²K")
+
+        select_with_placeholder("Floor insulation (R-value)", list(R_VALUES_FLOOR.keys()), key="o_floorRLabel")
+        if st.session_state["o_floorRLabel"] != PLACEHOLDER:
+            r = R_VALUES_FLOOR[st.session_state["o_floorRLabel"]]
+            st.caption(f"R={r:.1f}, U={1/r:.2f} W/m²K")
+
+        select_with_placeholder("Window type (U-value)", list(U_VALUES_WINDOWS.keys()), key="o_windowULabel")
+        if st.session_state["o_windowULabel"] != PLACEHOLDER:
+            u = U_VALUES_WINDOWS[st.session_state["o_windowULabel"]]
+            st.caption(f"U={u:.1f} W/m²K")
+
+        st.number_input("Total window area (m²)", min_value=0.0, max_value=200.0, step=5.0, key="o_windowArea")
+
+    with st.expander("1.1.4) Space heating system", expanded=False):
+        select_with_placeholder("Heating system", list(HEATING_SYSTEMS.keys()), key="o_heatingSystem")
+        if st.session_state["o_heatingSystem"] != PLACEHOLDER:
+            st.caption(f"Efficiency/COP: **{HEATING_SYSTEMS[st.session_state['o_heatingSystem']]}** (DUMMY)")
+
+    with st.expander("1.2) Water heating system", expanded=False):
+        select_with_placeholder("Water heating system", list(WATER_HEATING_SYSTEMS.keys()), key="o_waterHeatingSystem")
+        if st.session_state["o_waterHeatingSystem"] != PLACEHOLDER:
+            st.caption(f"Efficiency/COP: **{WATER_HEATING_SYSTEMS[st.session_state['o_waterHeatingSystem']]}** (DUMMY)")
+
+    with st.expander("1.3) Lighting & appliances", expanded=False):
+        st.markdown("**Lighting**")
+        st.number_input("Number of lights", min_value=0, max_value=200, step=1, key="o_light_n")
+        st.number_input("Watts per light", min_value=0.0, max_value=200.0, step=1.0, key="o_light_watts")
+        st.number_input("Lighting hours/day", min_value=0.0, max_value=24.0, step=0.5, key="o_light_hours")
+
+        st.markdown("**Washing machine**")
+        select_with_placeholder("Has washing machine?", ["Yes", "No"], key="o_wash_has")
+        if st.session_state["o_wash_has"] == "Yes":
+            st.number_input("Cycles/week (washing)", min_value=0.0, max_value=50.0, step=1.0, key="o_wash_cycles")
+            st.number_input("kWh/cycle (washing)", min_value=0.0, max_value=10.0, step=0.1, key="o_wash_kwh")
+            st.number_input("L/cycle (washing)", min_value=0.0, max_value=300.0, step=5.0, key="o_wash_L")
+
+        st.markdown("**Dishwasher**")
+        select_with_placeholder("Has dishwasher?", ["Yes", "No"], key="o_dish_has")
+        if st.session_state["o_dish_has"] == "Yes":
+            st.number_input("Cycles/week (dishwasher)", min_value=0.0, max_value=50.0, step=1.0, key="o_dish_cycles")
+            st.number_input("kWh/cycle (dishwasher)", min_value=0.0, max_value=10.0, step=0.1, key="o_dish_kwh")
+            st.number_input("L/cycle (dishwasher)", min_value=0.0, max_value=100.0, step=1.0, key="o_dish_L")
+
+        st.markdown("**Cooking**")
+        st.number_input("Meals/week", min_value=0.0, max_value=100.0, step=1.0, key="o_cook_meals")
+        st.number_input("kWh/meal", min_value=0.0, max_value=10.0, step=0.1, key="o_cook_kwh")
+
+    with st.expander("2) Water fixtures", expanded=False):
+        select_with_placeholder("Toilet type", list(TOILET_TYPES.keys()), key="o_toiletType")
+        if st.session_state["o_toiletType"] != PLACEHOLDER:
+            st.caption(f"{TOILET_TYPES[st.session_state['o_toiletType']]} L/flush (DUMMY)")
+
+        select_with_placeholder("Shower type", list(SHOWER_TYPES.keys()), key="o_showerType")
+        if st.session_state["o_showerType"] != PLACEHOLDER:
+            st.caption(f"{SHOWER_TYPES[st.session_state['o_showerType']]} L/min (DUMMY)")
+
+        select_with_placeholder("Tap type", list(TAP_TYPES.keys()), key="o_tapType")
+        if st.session_state["o_tapType"] != PLACEHOLDER:
+            st.caption(f"{TAP_TYPES[st.session_state['o_tapType']]} L/min (DUMMY)")
 
 # =============================================================================
-# CALCULATE BUTTON / RESULTS
+# RESULTS COLUMN
 # =============================================================================
-
-current_inputs_snapshot = {
-    "advanced": st.session_state.advanced,
-    "baseline": st.session_state.baseline,
-    "option": st.session_state.option,
-}
-current_hash = stable_hash(current_inputs_snapshot)
-
-with col_res:
+with col_r:
     st.subheader("Results")
 
-    action_row = st.columns([1.2, 1.0, 2.0], gap="small")
-    with action_row[0]:
-        calc_clicked = st.button("Calculate / Update Results", use_container_width=True)
-    with action_row[1]:
-        if st.button("Hide Results", use_container_width=True):
-            st.session_state.has_calculated = False
-            st.session_state.last_payload = None
-            st.session_state.last_calc_hash = None
-    with action_row[2]:
-        st.caption("Results are shown only after you calculate. If you change inputs, calculate again.")
+    # Current inputs snapshot (for dirty check)
+    baseline_now = get_scenario("b")
+    option_now = get_scenario("o")
+    signature_now = _stable_hash({"advanced": adv, "baseline": baseline_now, "option": option_now})
 
-    if calc_clicked:
-        if not scenario_ready(st.session_state.baseline):
-            st.error("Baseline scenario belum lengkap. Semua dropdown utama harus dipilih dulu sebelum kalkulasi.")
+    # Calculate button (results are NOT live)
+    c1, c2 = st.columns([1, 1])
+    with c1:
+        do_calc = st.button("Calculate results", type="primary", use_container_width=True)
+    with c2:
+        show_charts = st.toggle("Show charts", value=True)
+
+    if do_calc:
+        missing_b = validate_scenario(baseline_now)
+        if missing_b:
+            st.error("Baseline is incomplete. Missing: " + ", ".join(missing_b))
+            st.session_state["has_calculated"] = False
+            st.session_state["last_payload"] = None
+            st.session_state["last_signature"] = None
         else:
-            baseline_results = calculate_scenario(st.session_state.baseline, st.session_state.advanced)
+            # Baseline always calculated (once baseline complete)
+            base_r = calculate_scenario(baseline_now, adv)
 
-            option_results = None
-            if scenario_ready(st.session_state.option):
-                option_results = calculate_scenario(st.session_state.option, st.session_state.advanced)
-
-            savings = None
-            if option_results is not None:
-                savings = {
-                    "electricity": baseline_results["totalElectricity"] - option_results["totalElectricity"],
-                    "electricityPct": _pct(baseline_results["totalElectricity"], option_results["totalElectricity"]),
-                    "water": baseline_results["waterConsumption"]["V_total"] - option_results["waterConsumption"]["V_total"],
-                    "waterPct": _pct(baseline_results["waterConsumption"]["V_total"], option_results["waterConsumption"]["V_total"]),
-                    "carbon": baseline_results["carbon"]["CO2_total"] - option_results["carbon"]["CO2_total"],
-                    "carbonPct": _pct(baseline_results["carbon"]["CO2_total"], option_results["carbon"]["CO2_total"]),
-                    "cost": baseline_results["costs"]["cost_total"] - option_results["costs"]["cost_total"],
-                    "costPct": _pct(baseline_results["costs"]["cost_total"], option_results["costs"]["cost_total"]),
-                }
+            # Option only if complete
+            missing_o = validate_scenario(option_now)
+            opt_r = None if missing_o else calculate_scenario(option_now, adv)
 
             payload = {
-                "timestamp": datetime.now(timezone.utc).isoformat(),
-                "advancedSettings": st.session_state.advanced,
-                "baseline": {"inputs": st.session_state.baseline, "results": baseline_results},
-                "option": {"inputs": st.session_state.option, "results": option_results},
-                "savings": savings,
-                "assumptions": {
-                    "GRID_EMISSION_FACTOR": GRID_EMISSION_FACTOR,
-                    "WATER_EMISSION_FACTOR": WATER_EMISSION_FACTOR,
-                    "ELECTRICITY_TARIFF": ELECTRICITY_TARIFF,
-                    "WATER_TARIFF": WATER_TARIFF,
+                "timestamp": datetime.utcnow().isoformat() + "Z",
+                "advancedSettings": adv,
+                "baseline": {"inputs": baseline_now, "results": base_r},
+                "option": {"inputs": option_now, "results": opt_r, "missing": missing_o},
+                "notes": {
+                    "coefficients": "DUMMY placeholders unless replaced.",
+                    "tool_scope": "Early-stage decision support; not certification; not predictive modelling.",
                 },
-                "notes": "All coefficients are DUMMY placeholders. Model is early-stage comparative, not certification.",
             }
 
-            st.session_state.last_payload = payload
-            st.session_state.last_calc_hash = current_hash
-            st.session_state.has_calculated = True
+            st.session_state["has_calculated"] = True
+            st.session_state["last_payload"] = payload
+            st.session_state["last_signature"] = signature_now
 
-    if st.session_state.has_calculated and st.session_state.last_calc_hash != current_hash:
-        st.warning("Inputs sudah berubah sejak kalkulasi terakhir. Klik **Calculate / Update Results** untuk refresh.")
+    # Display last results snapshot only
+    if not st.session_state["has_calculated"] or st.session_state["last_payload"] is None:
+        st.info("Press **Calculate results** to generate outputs. Results do not update live.")
+        st.stop()
 
-    if not st.session_state.has_calculated or st.session_state.last_payload is None:
-        st.info("Pilih input dulu (dropdown tidak ada default), lalu klik **Calculate / Update Results**.")
-    else:
-        payload = st.session_state.last_payload
-        base_r = payload["baseline"]["results"]
-        opt_r = payload["option"]["results"]
-        savings = payload["savings"]
+    # Dirty check
+    if st.session_state["last_signature"] != signature_now:
+        st.warning("Inputs have changed since the last calculation. Press **Calculate results** to refresh outputs.")
 
-        if opt_r is None:
-            st.markdown("**Baseline Results (Option belum lengkap, jadi tidak dihitung)**")
-            rows = [
-                {"Metric": "Total Energy Consumption", "Value": fmt(base_r["totalElectricity"], 1), "Unit": "kWh/year"},
-                {"Metric": "Energy Intensity", "Value": fmt(base_r["energyIntensity"], 2), "Unit": "kWh/m²/year"},
-                {"Metric": "Water Consumption", "Value": fmt(base_r["waterConsumption"]["V_total"], 2), "Unit": "m³/year"},
-                {"Metric": "Operational Carbon", "Value": fmt(base_r["carbon"]["CO2_total"], 1), "Unit": "kgCO₂e/year"},
-                {"Metric": "Annual Operating Cost", "Value": fmt0(base_r["costs"]["cost_total"]), "Unit": "NZD/year"},
-            ]
-            st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
-        else:
-            st.markdown("**Comparison (Baseline vs Option)**")
-            kpis = [
-                ("Total Energy Consumption", base_r["totalElectricity"], opt_r["totalElectricity"], "kWh/year", 1),
-                ("Energy Intensity", base_r["energyIntensity"], opt_r["energyIntensity"], "kWh/m²/year", 2),
-                ("Water Consumption", base_r["waterConsumption"]["V_total"], opt_r["waterConsumption"]["V_total"], "m³/year", 2),
-                ("Operational Carbon", base_r["carbon"]["CO2_total"], opt_r["carbon"]["CO2_total"], "kgCO₂e/year", 1),
-                ("Annual Operating Cost", base_r["costs"]["cost_total"], opt_r["costs"]["cost_total"], "NZD/year", 0),
-            ]
+    payload = st.session_state["last_payload"]
+    base_r = payload["baseline"]["results"]
+    opt_r = payload["option"]["results"]
+    opt_missing = payload["option"]["missing"]
 
-            rows = []
-            for label, base, opt, unit, dec in kpis:
-                arrow = _trend_arrow(opt, base)
-                rows.append({
-                    "Metric": label,
-                    "Baseline": fmt(base, dec) if dec > 0 else fmt0(base),
-                    "Option": f"{(fmt(opt, dec) if dec > 0 else fmt0(opt))} {arrow}",
-                    "Unit": unit,
-                })
-            st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
+    # Download snapshot
+    st.download_button(
+        "Download results (JSON)",
+        data=json.dumps(payload, indent=2),
+        file_name=f"housing-sustainability-comparison-{int(datetime.utcnow().timestamp())}.json",
+        mime="application/json",
+        use_container_width=True,
+    )
 
-            with st.expander("Annual Savings Summary (Option vs Baseline)", expanded=True):
-                def savings_line(name, value, pct, unit, decimals=1, currency=False):
-                    sign = "−" if value > 0 else "+"
-                    v = abs(value)
-                    v_str = fmt0(v) if currency else fmt(v, decimals)
-                    st.write(f"**{name}:** {sign}{v_str} {unit} ({pct:.1f}%)")
+    st.divider()
 
-                savings_line("Energy", savings["electricity"], savings["electricityPct"], "kWh", decimals=1)
-                savings_line("Water", savings["water"], savings["waterPct"], "m³", decimals=2)
-                savings_line("Carbon", savings["carbon"], savings["carbonPct"], "kgCO₂e", decimals=1)
-                savings_line("Cost", savings["cost"], savings["costPct"], "NZD", currency=True)
+    # KPI table (Baseline vs Option with arrow)
+    def kpi_rows():
+        rows = [
+            ("Total Energy Consumption", base_r["totalElectricity"], None if opt_r is None else opt_r["totalElectricity"], "kWh/year", 1),
+            ("Energy Intensity", base_r["energyIntensity"], None if opt_r is None else opt_r["energyIntensity"], "kWh/m²/year", 2),
+            ("Water Consumption", base_r["waterConsumption"]["V_total"], None if opt_r is None else opt_r["waterConsumption"]["V_total"], "m³/year", 2),
+            ("Operational Carbon", base_r["carbon"]["CO2_total"], None if opt_r is None else opt_r["carbon"]["CO2_total"], "kgCO₂e/year", 1),
+            ("Annual Operating Cost", base_r["costs"]["cost_total"], None if opt_r is None else opt_r["costs"]["cost_total"], "NZD/year", 0),
+        ]
+        out = []
+        for name, b, o, unit, dec in rows:
+            if o is None:
+                out.append({"Metric": name, "Baseline": fmt_num(b, dec), "Option": "—", "Δ (Option−Base)": "—", "Dir": "—", "Unit": unit})
+            else:
+                d = o - b
+                out.append({"Metric": name, "Baseline": fmt_num(b, dec), "Option": fmt_num(o, dec), "Δ (Option−Base)": fmt_num(d, dec), "Dir": direction_arrow(d), "Unit": unit})
+        return out
 
-        st.download_button(
-            label="Download Results (JSON)",
-            data=json.dumps(payload, indent=2),
-            file_name=f"housing-sustainability-comparison-{int(datetime.now().timestamp())}.json",
-            mime="application/json",
-            use_container_width=True,
-        )
+    st.markdown("**Key Performance Indicators**")
+    st.dataframe(pd.DataFrame(kpi_rows()), use_container_width=True, hide_index=True)
+
+    if opt_r is None:
+        st.info("Option is incomplete. Complete Option inputs (or use **Copy Baseline → Option**) and recalculate to see comparison and charts.")
+        st.stop()
+
+    # Savings (Option vs Baseline; positive = improvement)
+    savings = {
+        "electricity": base_r["totalElectricity"] - opt_r["totalElectricity"],
+        "water": base_r["waterConsumption"]["V_total"] - opt_r["waterConsumption"]["V_total"],
+        "carbon": base_r["carbon"]["CO2_total"] - opt_r["carbon"]["CO2_total"],
+        "cost": base_r["costs"]["cost_total"] - opt_r["costs"]["cost_total"],
+    }
+
+    def pct(saved, base):
+        return (saved / base * 100.0) if base and base > 0 else 0.0
+
+    st.markdown("**Annual Savings (Option vs Baseline)**")
+    st.write(
+        f"- Energy: **{savings['electricity']:,.1f} kWh** ({pct(savings['electricity'], base_r['totalElectricity']):.1f}%)\n"
+        f"- Water: **{savings['water']:,.2f} m³** ({pct(savings['water'], base_r['waterConsumption']['V_total']):.1f}%)\n"
+        f"- Carbon: **{savings['carbon']:,.1f} kgCO₂e** ({pct(savings['carbon'], base_r['carbon']['CO2_total']):.1f}%)\n"
+        f"- Cost: **{savings['cost']:,.0f} NZD** ({pct(savings['cost'], base_r['costs']['cost_total']):.1f}%)"
+    )
+
+    # Charts (tabs)
+    if show_charts:
+        st.divider()
+        tabs = st.tabs(["KPIs", "Energy", "Water", "Carbon", "Cost"])
+
+        with tabs[0]:
+            df_kpi = pd.DataFrame([
+                {"Metric": "Total Energy (kWh/y)", "Baseline": base_r["totalElectricity"], "Option": opt_r["totalElectricity"]},
+                {"Metric": "Energy Intensity (kWh/m²/y)", "Baseline": base_r["energyIntensity"], "Option": opt_r["energyIntensity"]},
+                {"Metric": "Water (m³/y)", "Baseline": base_r["waterConsumption"]["V_total"], "Option": opt_r["waterConsumption"]["V_total"]},
+                {"Metric": "Operational Carbon (kgCO₂e/y)", "Baseline": base_r["carbon"]["CO2_total"], "Option": opt_r["carbon"]["CO2_total"]},
+                {"Metric": "Cost (NZD/y)", "Baseline": base_r["costs"]["cost_total"], "Option": opt_r["costs"]["cost_total"]},
+            ])
+            dfm = df_kpi.melt(id_vars=["Metric"], var_name="Scenario", value_name="Value")
+            fig = px.bar(dfm, y="Metric", x="Value", color="Scenario", barmode="group", orientation="h")
+            st.plotly_chart(fig, use_container_width=True)
+
+        with tabs[1]:
+            df_energy = pd.DataFrame([
+                {"Scenario": "Baseline", "Component": "Space Heating", "Value": base_r["spaceHeating"]["Q_purchased"]},
+                {"Scenario": "Baseline", "Component": "Water Heating", "Value": base_r["waterHeating"]["Q_purchased"]},
+                {"Scenario": "Baseline", "Component": "Lighting & Appliances", "Value": base_r["lightingAppliances"]["Q_total"]},
+                {"Scenario": "Option", "Component": "Space Heating", "Value": opt_r["spaceHeating"]["Q_purchased"]},
+                {"Scenario": "Option", "Component": "Water Heating", "Value": opt_r["waterHeating"]["Q_purchased"]},
+                {"Scenario": "Option", "Component": "Lighting & Appliances", "Value": opt_r["lightingAppliances"]["Q_total"]},
+            ])
+            fig = px.bar(df_energy, x="Scenario", y="Value", color="Component", barmode="stack")
+            st.plotly_chart(fig, use_container_width=True)
+
+        with tabs[2]:
+            b = base_r["waterConsumption"]["breakdown"]
+            o = opt_r["waterConsumption"]["breakdown"]
+            df_water = pd.DataFrame([
+                {"Scenario": "Baseline", "Component": "Toilets", "Value": b["V_toilet"]},
+                {"Scenario": "Baseline", "Component": "Showers", "Value": b["V_shower"]},
+                {"Scenario": "Baseline", "Component": "Taps", "Value": b["V_taps"]},
+                {"Scenario": "Baseline", "Component": "Laundry", "Value": b["V_laundry"]},
+                {"Scenario": "Baseline", "Component": "Dishwasher", "Value": b["V_dishwasher"]},
+                {"Scenario": "Option", "Component": "Toilets", "Value": o["V_toilet"]},
+                {"Scenario": "Option", "Component": "Showers", "Value": o["V_shower"]},
+                {"Scenario": "Option", "Component": "Taps", "Value": o["V_taps"]},
+                {"Scenario": "Option", "Component": "Laundry", "Value": o["V_laundry"]},
+                {"Scenario": "Option", "Component": "Dishwasher", "Value": o["V_dishwasher"]},
+            ])
+            fig = px.bar(df_water, x="Scenario", y="Value", color="Component", barmode="stack")
+            st.plotly_chart(fig, use_container_width=True)
+
+        with tabs[3]:
+            df_carbon = pd.DataFrame([
+                {"Scenario": "Baseline", "Component": "Electricity", "Value": base_r["carbon"]["CO2_electricity"]},
+                {"Scenario": "Baseline", "Component": "Water", "Value": base_r["carbon"]["CO2_water"]},
+                {"Scenario": "Option", "Component": "Electricity", "Value": opt_r["carbon"]["CO2_electricity"]},
+                {"Scenario": "Option", "Component": "Water", "Value": opt_r["carbon"]["CO2_water"]},
+            ])
+            fig = px.bar(df_carbon, x="Scenario", y="Value", color="Component", barmode="stack")
+            st.plotly_chart(fig, use_container_width=True)
+
+        with tabs[4]:
+            df_cost = pd.DataFrame([
+                {"Scenario": "Baseline", "Component": "Electricity", "Value": base_r["costs"]["cost_electricity"]},
+                {"Scenario": "Baseline", "Component": "Water", "Value": base_r["costs"]["cost_water"]},
+                {"Scenario": "Option", "Component": "Electricity", "Value": opt_r["costs"]["cost_electricity"]},
+                {"Scenario": "Option", "Component": "Water", "Value": opt_r["costs"]["cost_water"]},
+            ])
+            fig = px.bar(df_cost, x="Scenario", y="Value", color="Component", barmode="stack")
+            st.plotly_chart(fig, use_container_width=True)
+
+st.caption(
+    "Notes: Results are simplified and indicative. This prototype uses placeholder coefficients unless you replace them. "
+    "No embodied carbon, no detailed simulation, no behavioural modelling, no time-of-use pricing."
+)
