@@ -1,4 +1,4 @@
-```python
+
 # streamlit_app.py
 import copy
 import json
