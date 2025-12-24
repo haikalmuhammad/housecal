@@ -19,8 +19,9 @@ PLACEHOLDER = "— Select —"
 # =============================================================================
 LOOKUP = {
     "constants": {
-        "grid_emission_factor_kgco2e_per_kwh": 0.0729,  # MfE (2024) for 2023
-        "water_emission_factor_kgco2e_per_m3": 0.0349,  # MfE (2024)
+        # Defaults (can be overridden per scenario in Usage block)
+        "grid_emission_factor_kgco2e_per_kwh_default": 0.0729,  # MfE (2024) for 2023
+        "water_emission_factor_kgco2e_per_m3_default": 0.0349,  # MfE (2024)
 
         "electricity_tariff_nzd_per_kwh_default": 0.312,  # placeholder
         "water_tariff_nzd_per_m3_default": 2.296,         # placeholder
@@ -386,7 +387,7 @@ def calculate_opex(total_kwh_y: float, total_m3_y: float, coeffs: dict) -> dict:
     c_w = total_m3_y * coeffs["water_tariff"]
     return {"opex_total_nzd_y": c_e + c_w, "opex_electricity_nzd_y": c_e, "opex_water_nzd_y": c_w}
 
-def compute_capex_total(s: dict) -> dict:
+def compute_capex_totals(s: dict) -> dict:
     areas = _geometry_areas(s["floorArea"], s["ceilingHeight"], s["windowArea"])
     cap = s["capex"]
 
@@ -402,34 +403,36 @@ def compute_capex_total(s: dict) -> dict:
 
     return {"capex_total_nzd": total, "breakdown_nzd": {"Envelope": envelope, "Systems": systems, "Fixtures": fixtures}}
 
-def calculate_incremental_capex(base_s: dict, opt_s: dict) -> dict:
-    base_total = compute_capex_total(base_s)
-    opt_total = compute_capex_total(opt_s)
-    inc = opt_total["capex_total_nzd"] - base_total["capex_total_nzd"]
-
-    def areas(s: dict):
-        a = _geometry_areas(s["floorArea"], s["ceilingHeight"], s["windowArea"])
-        return a["roof"], a["wall"], a["floor"], a["window"]
-
-    b_roofA, b_wallA, b_floorA, b_winA = areas(base_s)
-    o_roofA, o_wallA, o_floorA, o_winA = areas(opt_s)
-
-    b = base_s["capex"]
-    o = opt_s["capex"]
-
-    breakdown = {
-        "Roof insulation": (o["roof_nzd_per_m2"] * o_roofA) - (b["roof_nzd_per_m2"] * b_roofA),
-        "Wall insulation": (o["wall_nzd_per_m2"] * o_wallA) - (b["wall_nzd_per_m2"] * b_wallA),
-        "Floor insulation": (o["floor_nzd_per_m2"] * o_floorA) - (b["floor_nzd_per_m2"] * b_floorA),
-        "Windows": (o["window_nzd_per_m2_window"] * o_winA) - (b["window_nzd_per_m2_window"] * b_winA),
-        "Space heating system": o["space_heating_install_nzd"] - b["space_heating_install_nzd"],
-        "Water heating system": o["water_heating_install_nzd"] - b["water_heating_install_nzd"],
-        "Toilet install": o["toilet_install_nzd"] - b["toilet_install_nzd"],
-        "Shower install": o["shower_install_nzd"] - b["shower_install_nzd"],
-        "Tap install": o["tap_install_nzd"] - b["tap_install_nzd"],
+def compute_capex_breakdown_detailed(s: dict) -> dict:
+    areas = _geometry_areas(s["floorArea"], s["ceilingHeight"], s["windowArea"])
+    cap = s["capex"]
+    return {
+        "Roof insulation": cap["roof_nzd_per_m2"] * areas["roof"],
+        "Wall insulation": cap["wall_nzd_per_m2"] * areas["wall"],
+        "Floor insulation": cap["floor_nzd_per_m2"] * areas["floor"],
+        "Windows": cap["window_nzd_per_m2_window"] * areas["window"],
+        "Space heating system": cap["space_heating_install_nzd"],
+        "Water heating system": cap["water_heating_install_nzd"],
+        "Toilet install": cap["toilet_install_nzd"],
+        "Shower install": cap["shower_install_nzd"],
+        "Tap install": cap["tap_install_nzd"],
     }
 
-    return {"capex_incremental_nzd": inc, "breakdown_nzd": breakdown}
+def calculate_incremental_capex(base_s: dict, opt_s: dict) -> dict:
+    base_total = compute_capex_totals(base_s)
+    opt_total = compute_capex_totals(opt_s)
+    inc = opt_total["capex_total_nzd"] - base_total["capex_total_nzd"]
+
+    breakdown_base = compute_capex_breakdown_detailed(base_s)
+    breakdown_opt = compute_capex_breakdown_detailed(opt_s)
+    breakdown_inc = {k: breakdown_opt[k] - breakdown_base.get(k, 0.0) for k in breakdown_opt.keys()}
+
+    return {
+        "capex_incremental_nzd": inc,
+        "breakdown_incremental_nzd": breakdown_inc,
+        "baseline_total_nzd": base_total["capex_total_nzd"],
+        "option_total_nzd": opt_total["capex_total_nzd"],
+    }
 
 def calculate_scenario(s: dict, coeffs: dict) -> dict:
     space = calculate_space_heating(s)
@@ -442,6 +445,9 @@ def calculate_scenario(s: dict, coeffs: dict) -> dict:
     opex = calculate_opex(total_electricity_kwh_y, water_use["V_total_m3_y"], coeffs)
     energy_intensity = (total_electricity_kwh_y / s["floorArea"]) if s["floorArea"] > 0 else 0.0
 
+    cap_totals = compute_capex_totals(s)
+    cap_detail = compute_capex_breakdown_detailed(s)
+
     return {
         "spaceHeating": space,
         "waterConsumption": water_use,
@@ -451,51 +457,64 @@ def calculate_scenario(s: dict, coeffs: dict) -> dict:
         "energyIntensity_kwh_m2_y": energy_intensity,
         "carbon": carbon,
         "opex": opex,
+        "capex": cap_totals,
+        "capex_detail": cap_detail,
     }
 
 # =============================================================================
-# CHARTS
+# CHARTS (ALL VERTICAL BAR CHARTS)
 # =============================================================================
-def fig_stacked_bar(df: pd.DataFrame, title: str, y_label: str):
-    pivot = df.pivot_table(index="Scenario", columns="Component", values="Value", aggfunc="sum").fillna(0)
+def fig_bar_components_single(df: pd.DataFrame, title: str, y_label: str):
+    # df columns: Component, Value
     fig, ax = plt.subplots(figsize=(7.2, 4.2))
-    pivot.plot(kind="bar", stacked=True, ax=ax)
+    ax.bar(df["Component"], df["Value"])
+    ax.set_title(title)
+    ax.set_ylabel(y_label)
+    ax.set_xlabel("")
+    ax.tick_params(axis="x", rotation=35)
+    fig.tight_layout()
+    return fig
+
+def fig_bar_components_compare(df: pd.DataFrame, title: str, y_label: str):
+    # df columns: Component, Baseline, Option
+    components = df["Component"].tolist()
+    b = df["Baseline"].tolist()
+    o = df["Option"].tolist()
+
+    x = list(range(len(components)))
+    w = 0.4
+
+    fig, ax = plt.subplots(figsize=(7.2, 4.2))
+    ax.bar([i - w/2 for i in x], b, width=w, label="Baseline")
+    ax.bar([i + w/2 for i in x], o, width=w, label="Option")
+
+    ax.set_title(title)
+    ax.set_ylabel(y_label)
+    ax.set_xlabel("")
+    ax.set_xticks(x)
+    ax.set_xticklabels(components, rotation=35, ha="right")
+    ax.legend()
+    fig.tight_layout()
+    return fig
+
+def fig_kpi_compare_vertical(df_kpi: pd.DataFrame, title: str):
+    # df_kpi columns: Metric, Baseline, Option
+    metrics = df_kpi["Metric"].tolist()
+    b = df_kpi["Baseline"].tolist()
+    o = df_kpi["Option"].tolist()
+
+    x = list(range(len(metrics)))
+    w = 0.4
+
+    fig, ax = plt.subplots(figsize=(7.2, 4.2))
+    ax.bar([i - w/2 for i in x], b, width=w, label="Baseline")
+    ax.bar([i + w/2 for i in x], o, width=w, label="Option")
+
     ax.set_title(title)
     ax.set_xlabel("")
-    ax.set_ylabel(y_label)
-    ax.legend(title="Component", bbox_to_anchor=(1.02, 1), loc="upper left")
-    fig.tight_layout()
-    return fig
-
-def fig_grouped_barh(df_kpi: pd.DataFrame, title: str):
-    metrics = df_kpi["Metric"].tolist()
-    baseline_vals = df_kpi["Baseline"].tolist()
-    option_vals = df_kpi["Option"].tolist()
-
-    y = list(range(len(metrics)))
-    h = 0.35
-
-    fig, ax = plt.subplots(figsize=(7.2, 4.2))
-    ax.barh([yy - h/2 for yy in y], baseline_vals, height=h, label="Baseline")
-    ax.barh([yy + h/2 for yy in y], option_vals, height=h, label="Option")
-    ax.set_yticks(y)
-    ax.set_yticklabels(metrics)
-    ax.invert_yaxis()
-    ax.set_title(title)
-    ax.legend(loc="lower right")
-    fig.tight_layout()
-    return fig
-
-def fig_capex_breakdown(breakdown: dict):
-    items = list(breakdown.items())
-    labels = [k for k, _ in items]
-    vals = [v for _, v in items]
-
-    fig, ax = plt.subplots(figsize=(7.2, 4.2))
-    ax.barh(labels, vals)
-    ax.invert_yaxis()
-    ax.set_title("Incremental capex breakdown (Option − Baseline)")
-    ax.set_xlabel("NZD")
+    ax.set_xticks(x)
+    ax.set_xticklabels(metrics, rotation=35, ha="right")
+    ax.legend()
     fig.tight_layout()
     return fig
 
@@ -503,18 +522,12 @@ def fig_capex_breakdown(breakdown: dict):
 # STATE / DEFAULTS
 # =============================================================================
 def init_defaults():
-    # global coefficients
-    st.session_state.setdefault("coef_grid_ef", float(LOOKUP["constants"]["grid_emission_factor_kgco2e_per_kwh"]))
-    st.session_state.setdefault("coef_water_ef", float(LOOKUP["constants"]["water_emission_factor_kgco2e_per_m3"]))
-    st.session_state.setdefault("coef_elec_tariff", float(LOOKUP["constants"]["electricity_tariff_nzd_per_kwh_default"]))
-    st.session_state.setdefault("coef_water_tariff", float(LOOKUP["constants"]["water_tariff_nzd_per_m3_default"]))
-
-    # flow state
     st.session_state.setdefault("baseline_calculated", False)
     st.session_state.setdefault("option_calculated", False)
     st.session_state.setdefault("baseline_payload", None)
     st.session_state.setdefault("option_payload", None)
 
+    # Scenario-specific defaults
     for p in ["b", "o"]:
         st.session_state.setdefault(f"{p}_floorArea", 120.0)
         st.session_state.setdefault(f"{p}_ceilingHeight", float(LOOKUP["constants"]["ceiling_height_m_default"]))
@@ -525,10 +538,12 @@ def init_defaults():
         st.session_state.setdefault(f"{p}_use_custom_hdd", False)
         st.session_state.setdefault(f"{p}_hdd_override_value", 2000.0)
 
+        # Lighting defaults are fine
         st.session_state.setdefault(f"{p}_light_n", LOOKUP["defaults"]["lighting"]["numberOfLights"])
         st.session_state.setdefault(f"{p}_light_watts", LOOKUP["defaults"]["lighting"]["wattsPerLight"])
         st.session_state.setdefault(f"{p}_light_hours", LOOKUP["defaults"]["lighting"]["hoursPerDay"])
 
+        # Appliances: default to "No" (explicit choice is still visible)
         st.session_state.setdefault(f"{p}_wash_has", "No")
         st.session_state.setdefault(f"{p}_wash_cycles", LOOKUP["defaults"]["washing_machine"]["cyclesPerWeek"])
         st.session_state.setdefault(f"{p}_wash_L", LOOKUP["defaults"]["washing_machine"]["waterPerCycle_L"])
@@ -536,7 +551,15 @@ def init_defaults():
         st.session_state.setdefault(f"{p}_dish_cycles", LOOKUP["defaults"]["dishwasher"]["cyclesPerWeek"])
         st.session_state.setdefault(f"{p}_dish_L", LOOKUP["defaults"]["dishwasher"]["waterPerCycle_L"])
 
-        # custom perf + costs
+        # IMPORTANT: All select labels default to PLACEHOLDER so fixtures are blank
+        for k in [
+            "roofRLabel", "wallRLabel", "floorRLabel", "windowULabel",
+            "spaceHeatingSystem", "waterHeatingSystem",
+            "toiletType", "showerType", "tapType",
+        ]:
+            st.session_state.setdefault(f"{p}_{k}", PLACEHOLDER)
+
+        # Custom perf + costs (only used if user chooses Custom)
         st.session_state.setdefault(f"{p}_roofR_custom", 6.6)
         st.session_state.setdefault(f"{p}_roofCost_custom", 25.0)
         st.session_state.setdefault(f"{p}_wallR_custom", 2.0)
@@ -567,21 +590,18 @@ def init_defaults():
         st.session_state.setdefault(f"{p}_minutes_per_shower", float(du["minutes_per_shower"]))
         st.session_state.setdefault(f"{p}_tapMinutes_ppd", float(du["tapMinutes_per_person_day"]))
 
-    cat_keys = [
-        "roofRLabel", "wallRLabel", "floorRLabel", "windowULabel",
-        "spaceHeatingSystem", "waterHeatingSystem",
-        "toiletType", "showerType", "tapType",
-    ]
-    for p in ["b", "o"]:
-        for k in cat_keys:
-            st.session_state.setdefault(f"{p}_{k}", PLACEHOLDER)
+        # Tariffs + factors per scenario
+        st.session_state.setdefault(f"{p}_elec_tariff", float(LOOKUP["constants"]["electricity_tariff_nzd_per_kwh_default"]))
+        st.session_state.setdefault(f"{p}_water_tariff", float(LOOKUP["constants"]["water_tariff_nzd_per_m3_default"]))
+        st.session_state.setdefault(f"{p}_grid_ef", float(LOOKUP["constants"]["grid_emission_factor_kgco2e_per_kwh_default"]))
+        st.session_state.setdefault(f"{p}_water_ef", float(LOOKUP["constants"]["water_emission_factor_kgco2e_per_m3_default"]))
 
-def get_coeffs() -> dict:
+def get_coeffs(prefix: str) -> dict:
     return {
-        "grid_ef": float(st.session_state["coef_grid_ef"]),
-        "water_ef": float(st.session_state["coef_water_ef"]),
-        "elec_tariff": float(st.session_state["coef_elec_tariff"]),
-        "water_tariff": float(st.session_state["coef_water_tariff"]),
+        "grid_ef": float(st.session_state[f"{prefix}_grid_ef"]),
+        "water_ef": float(st.session_state[f"{prefix}_water_ef"]),
+        "elec_tariff": float(st.session_state[f"{prefix}_elec_tariff"]),
+        "water_tariff": float(st.session_state[f"{prefix}_water_tariff"]),
     }
 
 def resolve_hdd(prefix: str) -> float | None:
@@ -724,7 +744,7 @@ def validate_scenario(s: dict) -> list:
     return missing
 
 # =============================================================================
-# INPUT UI (simplified + tabbed)
+# INPUT UI (SINGLE PAGE 3×2 GRID)
 # =============================================================================
 CITIES = sorted(list(LOOKUP["climate"]["zone_by_city"].keys()))
 ROOF_OPTS = list(LOOKUP["thermal_envelope"]["roofR_m2K_per_W"].keys()) + ["Custom"]
@@ -739,8 +759,27 @@ TOILET_OPTS = list(LOOKUP["fixtures"]["toilet"]["l_per_flush"].keys()) + ["Custo
 SHOWER_OPTS = list(LOOKUP["fixtures"]["shower"]["l_per_min"].keys()) + ["Custom"]
 TAP_OPTS = list(LOOKUP["fixtures"]["tap"]["l_per_min"].keys()) + ["Custom"]
 
+def core_inputs_block(prefix: str):
+    st.markdown("### Core")
+    select_with_placeholder("Closest city", CITIES, key=f"{prefix}_closestCity")
+
+    city = st.session_state[f"{prefix}_closestCity"]
+    if city != PLACEHOLDER:
+        z = LOOKUP["climate"]["zone_by_city"][city]
+        h_default = LOOKUP["climate"]["hdd_by_zone_base18"][z]
+        st.caption(f"Climate zone: **{z}** | Default HDD (base 18°C): **{h_default}**")
+
+        st.checkbox("Use custom HDD input", key=f"{prefix}_use_custom_hdd")
+        if st.session_state[f"{prefix}_use_custom_hdd"]:
+            st.number_input("Custom HDD (base 18°C)", min_value=0.0, max_value=6000.0, step=50.0, key=f"{prefix}_hdd_override_value")
+
+    st.number_input("Floor area (m²)", min_value=20.0, max_value=500.0, step=5.0, key=f"{prefix}_floorArea")
+    st.number_input("Ceiling height (m)", min_value=2.0, max_value=4.0, step=0.1, key=f"{prefix}_ceilingHeight")
+    st.number_input("Household size (people)", min_value=1, max_value=12, step=1, key=f"{prefix}_householdSize")
+    st.number_input("Total window area (m²)", min_value=0.0, max_value=200.0, step=5.0, key=f"{prefix}_windowArea")
+
 def envelope_block(prefix: str):
-    st.markdown("**Thermal envelope**")
+    st.markdown("### Envelope")
 
     def _r_item(name, label_key, options, perf_lookup, perf_custom_key, cost_custom_key, cap_element):
         select_with_placeholder(name, options, key=label_key)
@@ -759,45 +798,17 @@ def envelope_block(prefix: str):
                 cost = resolve_capex_envelope(cap_element, label, cost_custom_key)
                 show_selected_line(label, perf=f"R = {fmt_num(perf,2)} m²K/W", cost=f"{fmt_num(cost,0)} NZD/m²")
 
-    _r_item(
-        "Roof insulation (R-value)",
-        f"{prefix}_roofRLabel",
-        ROOF_OPTS,
-        LOOKUP["thermal_envelope"]["roofR_m2K_per_W"],
-        f"{prefix}_roofR_custom",
-        f"{prefix}_roofCost_custom",
-        "roof",
-    )
-    _r_item(
-        "Wall insulation (R-value)",
-        f"{prefix}_wallRLabel",
-        WALL_OPTS,
-        LOOKUP["thermal_envelope"]["wallR_m2K_per_W"],
-        f"{prefix}_wallR_custom",
-        f"{prefix}_wallCost_custom",
-        "wall",
-    )
-    _r_item(
-        "Floor insulation (R-value)",
-        f"{prefix}_floorRLabel",
-        FLOOR_OPTS,
-        LOOKUP["thermal_envelope"]["floorR_m2K_per_W"],
-        f"{prefix}_floorR_custom",
-        f"{prefix}_floorCost_custom",
-        "floor",
-    )
-    _r_item(
-        "Window type (U-value)",
-        f"{prefix}_windowULabel",
-        WIN_OPTS,
-        LOOKUP["thermal_envelope"]["windowU_W_per_m2K"],
-        f"{prefix}_windowU_custom",
-        f"{prefix}_windowCost_custom",
-        "window",
-    )
+    _r_item("Roof insulation (R-value)", f"{prefix}_roofRLabel", ROOF_OPTS,
+            LOOKUP["thermal_envelope"]["roofR_m2K_per_W"], f"{prefix}_roofR_custom", f"{prefix}_roofCost_custom", "roof")
+    _r_item("Wall insulation (R-value)", f"{prefix}_wallRLabel", WALL_OPTS,
+            LOOKUP["thermal_envelope"]["wallR_m2K_per_W"], f"{prefix}_wallR_custom", f"{prefix}_wallCost_custom", "wall")
+    _r_item("Floor insulation (R-value)", f"{prefix}_floorRLabel", FLOOR_OPTS,
+            LOOKUP["thermal_envelope"]["floorR_m2K_per_W"], f"{prefix}_floorR_custom", f"{prefix}_floorCost_custom", "floor")
+    _r_item("Window type (U-value)", f"{prefix}_windowULabel", WIN_OPTS,
+            LOOKUP["thermal_envelope"]["windowU_W_per_m2K"], f"{prefix}_windowU_custom", f"{prefix}_windowCost_custom", "window")
 
 def systems_block(prefix: str):
-    st.markdown("**Systems**")
+    st.markdown("### Systems")
 
     def _sys_item(title, label_key, options, sys_block, cop_custom_key, cost_custom_key):
         select_with_placeholder(title, options, key=label_key)
@@ -818,7 +829,7 @@ def systems_block(prefix: str):
               f"{prefix}_waterCOP_custom", f"{prefix}_waterInstall_custom")
 
 def fixtures_block(prefix: str):
-    st.markdown("**Water fixtures + appliance water**")
+    st.markdown("### Fixtures")
 
     def _fix_item(title, label_key, options, kind, val_custom_key, cost_custom_key, unit_label):
         select_with_placeholder(title, options, key=label_key)
@@ -853,12 +864,14 @@ def fixtures_block(prefix: str):
         st.number_input("L/cycle (dishwasher)", min_value=0.0, max_value=100.0, step=1.0, key=f"{prefix}_dish_L")
 
 def lighting_block(prefix: str):
-    st.markdown("**Lighting**")
+    st.markdown("### Lighting")
     st.number_input("Number of lights", min_value=0, max_value=200, step=1, key=f"{prefix}_light_n")
     st.number_input("Watts per light", min_value=0.0, max_value=200.0, step=1.0, key=f"{prefix}_light_watts")
     st.number_input("Lighting hours/day", min_value=0.0, max_value=24.0, step=0.5, key=f"{prefix}_light_hours")
 
-def usage_block(prefix: str):
+def usage_and_tariffs_block(prefix: str):
+    st.markdown("### Usage + Tariffs/Facts")
+
     st.markdown("**Usage assumptions**")
     st.number_input("Hot water setpoint (°C)", min_value=30.0, max_value=80.0, step=1.0, key=f"{prefix}_hotWater_setpoint_C")
     st.number_input("Cold water inlet temperature (°C)", min_value=0.0, max_value=30.0, step=1.0, key=f"{prefix}_coldWater_inlet_C")
@@ -867,39 +880,31 @@ def usage_block(prefix: str):
     st.number_input("Minutes/shower", min_value=0.0, max_value=60.0, step=0.1, key=f"{prefix}_minutes_per_shower")
     st.number_input("Tap minutes/person/day", min_value=0.0, max_value=120.0, step=0.5, key=f"{prefix}_tapMinutes_ppd")
 
-def core_inputs_block(prefix: str):
-    st.markdown("**Core inputs**")
-    select_with_placeholder("Closest city", CITIES, key=f"{prefix}_closestCity")
-    city = st.session_state[f"{prefix}_closestCity"]
-    if city != PLACEHOLDER:
-        z = LOOKUP["climate"]["zone_by_city"][city]
-        h_default = LOOKUP["climate"]["hdd_by_zone_base18"][z]
-        st.caption(f"Climate zone: **{z}** | Default HDD (base 18°C): **{h_default}**")
+    st.markdown("**Tariffs + emission factors (scenario-specific)**")
+    st.number_input("Electricity tariff (NZD/kWh)", min_value=0.0, max_value=2.0, step=0.01, key=f"{prefix}_elec_tariff")
+    st.number_input("Water tariff (NZD/m³)", min_value=0.0, max_value=20.0, step=0.1, key=f"{prefix}_water_tariff")
+    st.number_input("Grid emission factor (kgCO₂e/kWh)", min_value=0.0, max_value=1.0, step=0.0001, key=f"{prefix}_grid_ef")
+    st.number_input("Water emission factor (kgCO₂e/m³)", min_value=0.0, max_value=5.0, step=0.0001, key=f"{prefix}_water_ef")
 
-        st.checkbox("Use custom HDD input", key=f"{prefix}_use_custom_hdd")
-        if st.session_state[f"{prefix}_use_custom_hdd"]:
-            st.number_input("Custom HDD (base 18°C)", min_value=0.0, max_value=6000.0, step=50.0, key=f"{prefix}_hdd_override_value")
-
-    st.number_input("Floor area (m²)", min_value=20.0, max_value=500.0, step=5.0, key=f"{prefix}_floorArea")
-    st.number_input("Ceiling height (m)", min_value=2.0, max_value=4.0, step=0.1, key=f"{prefix}_ceilingHeight")
-    st.number_input("Household size (people)", min_value=1, max_value=12, step=1, key=f"{prefix}_householdSize")
-    st.number_input("Total window area (m²)", min_value=0.0, max_value=200.0, step=5.0, key=f"{prefix}_windowArea")
-
-def scenario_inputs(prefix: str, title: str):
+def scenario_inputs_grid(prefix: str, title: str):
     st.subheader(title)
-    tabs = st.tabs(["Core", "Envelope", "Systems", "Fixtures", "Lighting", "Usage"])
-    with tabs[0]:
+
+    r1c1, r1c2, r1c3 = st.columns(3, gap="large")
+    r2c1, r2c2, r2c3 = st.columns(3, gap="large")
+
+    with r1c1:
         core_inputs_block(prefix)
-    with tabs[1]:
+    with r1c2:
         envelope_block(prefix)
-    with tabs[2]:
+    with r1c3:
         systems_block(prefix)
-    with tabs[3]:
+
+    with r2c1:
         fixtures_block(prefix)
-    with tabs[4]:
+    with r2c2:
         lighting_block(prefix)
-    with tabs[5]:
-        usage_block(prefix)
+    with r2c3:
+        usage_and_tariffs_block(prefix)
 
 # =============================================================================
 # KPI TABLES
@@ -911,25 +916,39 @@ def kpi_table_baseline(base_r: dict) -> pd.DataFrame:
         ("Water Consumption", base_r["waterConsumption"]["V_total_m3_y"], "m³/year", 2),
         ("Operational Carbon", base_r["carbon"]["CO2_total_kg_y"], "kgCO₂e/year", 1),
         ("Annual Operating Cost (Opex)", base_r["opex"]["opex_total_nzd_y"], "NZD/year", 0),
+        ("Total Capex (scenario)", base_r["capex"]["capex_total_nzd"], "NZD", 0),
     ]
     out = []
     for m, v, u, d in rows:
-        out.append({"Metric": m, "Baseline": fmt_num(v, d), "Unit": u})
+        out.append({"Metric": m, "Value": fmt_num(v, d), "Unit": u})
     return pd.DataFrame(out)
 
-def kpi_table_compare(base_r: dict, opt_r: dict, capex: dict | None) -> pd.DataFrame:
+def kpi_table_compare(base_r: dict, opt_r: dict, capex_inc: dict | None) -> pd.DataFrame:
     rows = [
         ("Total Energy (excl. plug loads)", base_r["totalElectricity_kwh_y"], opt_r["totalElectricity_kwh_y"], "kWh/year", 1),
         ("Energy Intensity", base_r["energyIntensity_kwh_m2_y"], opt_r["energyIntensity_kwh_m2_y"], "kWh/m²/year", 2),
         ("Water Consumption", base_r["waterConsumption"]["V_total_m3_y"], opt_r["waterConsumption"]["V_total_m3_y"], "m³/year", 2),
         ("Operational Carbon", base_r["carbon"]["CO2_total_kg_y"], opt_r["carbon"]["CO2_total_kg_y"], "kgCO₂e/year", 1),
         ("Annual Operating Cost (Opex)", base_r["opex"]["opex_total_nzd_y"], opt_r["opex"]["opex_total_nzd_y"], "NZD/year", 0),
+        ("Total Capex (scenario)", base_r["capex"]["capex_total_nzd"], opt_r["capex"]["capex_total_nzd"], "NZD", 0),
     ]
-    if capex is not None:
-        rows.append(("Incremental Capex (Option − Baseline)", 0.0, capex["capex_incremental_nzd"], "NZD", 0))
 
+    out = []
+    for m, b, o, u, d in rows:
+        delta = o - b
+        out.append({
+            "Metric": m,
+            "Baseline": fmt_num(b, d),
+            "Option": fmt_num(o, d),
+            "Δ (Option−Base)": fmt_num(delta, d),
+            "Dir": direction_arrow(delta),
+            "Unit": u,
+        })
+
+    # Payback row (still uses incremental capex)
+    if capex_inc is not None:
         savings = base_r["opex"]["opex_total_nzd_y"] - opt_r["opex"]["opex_total_nzd_y"]
-        inc = capex["capex_incremental_nzd"]
+        inc = capex_inc["capex_incremental_nzd"]
         if inc <= 0:
             pb = 0.0
             note = "No additional capex"
@@ -939,25 +958,25 @@ def kpi_table_compare(base_r: dict, opt_r: dict, capex: dict | None) -> pd.DataF
         else:
             pb = inc / savings
             note = ""
-        rows.append(("Simple Payback", None, pb, "years", 1, note))
 
-    out = []
-    for r in rows:
-        if len(r) == 5:
-            m, b, o, u, d = r
-            note = ""
-        else:
-            m, b, o, u, d, note = r
-        delta = None if (b is None or o is None) else (o - b)
         out.append({
-            "Metric": m,
-            "Baseline": "—" if b is None else fmt_num(b, d),
-            "Option": "—" if o is None else fmt_num(o, d),
-            "Δ (Option−Base)": "—" if delta is None else fmt_num(delta, d),
-            "Dir": "—" if delta is None else direction_arrow(delta),
-            "Unit": u,
-            "Note": note,
+            "Metric": "Simple Payback",
+            "Baseline": "—",
+            "Option": "—" if pb is None else fmt_num(pb, 1),
+            "Δ (Option−Base)": "—",
+            "Dir": "—",
+            "Unit": "years",
         })
+        if note:
+            out.append({
+                "Metric": "Payback note",
+                "Baseline": note,
+                "Option": "",
+                "Δ (Option−Base)": "",
+                "Dir": "",
+                "Unit": "",
+            })
+
     return pd.DataFrame(out)
 
 # =============================================================================
@@ -968,24 +987,10 @@ init_defaults()
 st.title("NZ Housing Sustainability Calculator (Prototype)")
 st.caption("Early-stage comparison tool. Simplified, indicative, non-certification.")
 
-# ---- Global coefficients always visible
-with st.expander("Tariffs & factors (affects carbon + opex)", expanded=True):
-    c1, c2, c3, c4 = st.columns(4)
-    with c1:
-        st.number_input("Electricity tariff (NZD/kWh)", min_value=0.0, max_value=2.0, step=0.01, key="coef_elec_tariff")
-    with c2:
-        st.number_input("Water tariff (NZD/m³)", min_value=0.0, max_value=20.0, step=0.1, key="coef_water_tariff")
-    with c3:
-        st.number_input("Grid emission factor (kgCO₂e/kWh)", min_value=0.0, max_value=1.0, step=0.0001, key="coef_grid_ef")
-    with c4:
-        st.number_input("Water emission factor (kgCO₂e/m³)", min_value=0.0, max_value=5.0, step=0.0001, key="coef_water_ef")
-
-coeffs = get_coeffs()
-
 # ---- BASELINE (Step 1)
 st.divider()
 st.markdown("## Step 1 — Baseline")
-scenario_inputs("b", "Baseline inputs")
+scenario_inputs_grid("b", "Baseline inputs")
 
 baseline_now = get_scenario("b")
 missing_b = validate_scenario(baseline_now)
@@ -994,9 +999,9 @@ b_actions = st.columns([1, 1, 3])
 with b_actions[0]:
     calc_b = st.button("Calculate Baseline", type="primary", use_container_width=True)
 with b_actions[1]:
-    reset_b = st.button("Reset Calculations", use_container_width=True)
+    reset_all = st.button("Reset Calculations", use_container_width=True)
 
-if reset_b:
+if reset_all:
     st.session_state["baseline_calculated"] = False
     st.session_state["option_calculated"] = False
     st.session_state["baseline_payload"] = None
@@ -1007,14 +1012,16 @@ if calc_b:
     if missing_b:
         st.error("Baseline incomplete. Missing: " + ", ".join(missing_b))
     else:
-        base_r = calculate_scenario(baseline_now, coeffs)
+        coeffs_b = get_coeffs("b")
+        base_r = calculate_scenario(baseline_now, coeffs_b)
         st.session_state["baseline_calculated"] = True
         st.session_state["baseline_payload"] = {
             "inputs": baseline_now,
+            "coeffs": coeffs_b,
             "results": base_r,
             "missing": [],
         }
-        # If baseline recalculated, option comparison is no longer trustworthy until recalculated
+        # Recalculate option after baseline changes
         st.session_state["option_calculated"] = False
         st.session_state["option_payload"] = None
         st.rerun()
@@ -1027,32 +1034,36 @@ if st.session_state["baseline_calculated"]:
     st.markdown("### Baseline results")
     st.dataframe(kpi_table_baseline(base_r), use_container_width=True, hide_index=True)
 
+    # Baseline charts (vertical bars)
     df_energy_b = pd.DataFrame([
-        {"Scenario": "Baseline", "Component": "Space Heating", "Value": base_r["spaceHeating"]["Q_purchased_kwh_y"]},
-        {"Scenario": "Baseline", "Component": "Water Heating", "Value": base_r["waterHeating"]["Q_purchased_kwh_y"]},
-        {"Scenario": "Baseline", "Component": "Lighting", "Value": base_r["lighting"]["Q_total_kwh_y"]},
+        {"Component": "Space Heating", "Value": base_r["spaceHeating"]["Q_purchased_kwh_y"]},
+        {"Component": "Water Heating", "Value": base_r["waterHeating"]["Q_purchased_kwh_y"]},
+        {"Component": "Lighting", "Value": base_r["lighting"]["Q_total_kwh_y"]},
     ])
-    df_water_b = pd.DataFrame([{"Scenario": "Baseline", "Component": k, "Value": v} for k, v in base_r["waterConsumption"]["breakdown_m3_y"].items()])
+    df_water_b = pd.DataFrame([{"Component": k, "Value": v} for k, v in base_r["waterConsumption"]["breakdown_m3_y"].items()])
     df_carbon_b = pd.DataFrame([
-        {"Scenario": "Baseline", "Component": "Electricity", "Value": base_r["carbon"]["CO2_electricity_kg_y"]},
-        {"Scenario": "Baseline", "Component": "Water", "Value": base_r["carbon"]["CO2_water_kg_y"]},
+        {"Component": "Electricity", "Value": base_r["carbon"]["CO2_electricity_kg_y"]},
+        {"Component": "Water", "Value": base_r["carbon"]["CO2_water_kg_y"]},
     ])
     df_opex_b = pd.DataFrame([
-        {"Scenario": "Baseline", "Component": "Electricity", "Value": base_r["opex"]["opex_electricity_nzd_y"]},
-        {"Scenario": "Baseline", "Component": "Water", "Value": base_r["opex"]["opex_water_nzd_y"]},
+        {"Component": "Electricity", "Value": base_r["opex"]["opex_electricity_nzd_y"]},
+        {"Component": "Water", "Value": base_r["opex"]["opex_water_nzd_y"]},
     ])
+    df_capex_b = pd.DataFrame([{"Component": k, "Value": v} for k, v in base_r["capex_detail"].items()])
 
     row1 = st.columns(2, gap="large")
     with row1[0]:
-        st.pyplot(fig_stacked_bar(df_energy_b, "Baseline energy breakdown (excl. plug loads)", "kWh/year"))
+        st.pyplot(fig_bar_components_single(df_energy_b, "Baseline energy breakdown", "kWh/year"))
     with row1[1]:
-        st.pyplot(fig_stacked_bar(df_water_b, "Baseline indoor water breakdown", "m³/year"))
+        st.pyplot(fig_bar_components_single(df_water_b, "Baseline indoor water breakdown", "m³/year"))
 
     row2 = st.columns(2, gap="large")
     with row2[0]:
-        st.pyplot(fig_stacked_bar(df_carbon_b, "Baseline operational carbon breakdown", "kgCO₂e/year"))
+        st.pyplot(fig_bar_components_single(df_carbon_b, "Baseline operational carbon breakdown", "kgCO₂e/year"))
     with row2[1]:
-        st.pyplot(fig_stacked_bar(df_opex_b, "Baseline opex breakdown", "NZD/year"))
+        st.pyplot(fig_bar_components_single(df_opex_b, "Baseline opex breakdown", "NZD/year"))
+
+    st.pyplot(fig_bar_components_single(df_capex_b, "Baseline capex breakdown (detailed)", "NZD"))
 
 # ---- OPTION (Step 2) unlocked only after baseline calculated
 st.divider()
@@ -1067,7 +1078,7 @@ with opt_actions[0]:
         copy_baseline_to_option()
         st.rerun()
 
-scenario_inputs("o", "Option inputs")
+scenario_inputs_grid("o", "Option inputs")
 
 option_now = get_scenario("o")
 missing_o = validate_scenario(option_now)
@@ -1080,16 +1091,22 @@ if calc_o:
     if missing_o:
         st.error("Option incomplete. Missing: " + ", ".join(missing_o))
     else:
-        base_r = st.session_state["baseline_payload"]["results"]
-        opt_r = calculate_scenario(option_now, coeffs)
-        capex = calculate_incremental_capex(st.session_state["baseline_payload"]["inputs"], option_now)
+        base_payload = st.session_state["baseline_payload"]
+        base_inputs = base_payload["inputs"]
+        base_r = base_payload["results"]
+
+        coeffs_o = get_coeffs("o")
+        opt_r = calculate_scenario(option_now, coeffs_o)
+
+        capex_inc = calculate_incremental_capex(base_inputs, option_now)
 
         st.session_state["option_calculated"] = True
         st.session_state["option_payload"] = {
             "inputs": option_now,
+            "coeffs": coeffs_o,
             "results": opt_r,
             "missing": [],
-            "capex": capex,
+            "capex_inc": capex_inc,
         }
         st.rerun()
 
@@ -1097,82 +1114,93 @@ if calc_o:
 if st.session_state["option_calculated"]:
     base_inputs = st.session_state["baseline_payload"]["inputs"]
     base_r = st.session_state["baseline_payload"]["results"]
+    coeffs_b = st.session_state["baseline_payload"]["coeffs"]
 
     opt_payload = st.session_state["option_payload"]
     opt_inputs = opt_payload["inputs"]
     opt_r = opt_payload["results"]
-    capex = opt_payload["capex"]
+    coeffs_o = opt_payload["coeffs"]
+    capex_inc = opt_payload["capex_inc"]
 
     st.markdown("### Comparison (Baseline vs Option)")
-    st.dataframe(kpi_table_compare(base_r, opt_r, capex), use_container_width=True, hide_index=True)
+    st.dataframe(kpi_table_compare(base_r, opt_r, capex_inc), use_container_width=True, hide_index=True)
 
+    # KPI compare chart (vertical)
     df_kpi = pd.DataFrame([
         {"Metric": "Energy (kWh/y)", "Baseline": base_r["totalElectricity_kwh_y"], "Option": opt_r["totalElectricity_kwh_y"]},
-        {"Metric": "Energy Intensity (kWh/m²/y)", "Baseline": base_r["energyIntensity_kwh_m2_y"], "Option": opt_r["energyIntensity_kwh_m2_y"]},
+        {"Metric": "Intensity (kWh/m²/y)", "Baseline": base_r["energyIntensity_kwh_m2_y"], "Option": opt_r["energyIntensity_kwh_m2_y"]},
         {"Metric": "Water (m³/y)", "Baseline": base_r["waterConsumption"]["V_total_m3_y"], "Option": opt_r["waterConsumption"]["V_total_m3_y"]},
         {"Metric": "Carbon (kgCO₂e/y)", "Baseline": base_r["carbon"]["CO2_total_kg_y"], "Option": opt_r["carbon"]["CO2_total_kg_y"]},
         {"Metric": "Opex (NZD/y)", "Baseline": base_r["opex"]["opex_total_nzd_y"], "Option": opt_r["opex"]["opex_total_nzd_y"]},
+        {"Metric": "Capex (NZD)", "Baseline": base_r["capex"]["capex_total_nzd"], "Option": opt_r["capex"]["capex_total_nzd"]},
     ])
 
+    # Component compare charts (vertical)
     df_energy = pd.DataFrame([
-        {"Scenario": "Baseline", "Component": "Space Heating", "Value": base_r["spaceHeating"]["Q_purchased_kwh_y"]},
-        {"Scenario": "Baseline", "Component": "Water Heating", "Value": base_r["waterHeating"]["Q_purchased_kwh_y"]},
-        {"Scenario": "Baseline", "Component": "Lighting", "Value": base_r["lighting"]["Q_total_kwh_y"]},
-        {"Scenario": "Option", "Component": "Space Heating", "Value": opt_r["spaceHeating"]["Q_purchased_kwh_y"]},
-        {"Scenario": "Option", "Component": "Water Heating", "Value": opt_r["waterHeating"]["Q_purchased_kwh_y"]},
-        {"Scenario": "Option", "Component": "Lighting", "Value": opt_r["lighting"]["Q_total_kwh_y"]},
+        {"Component": "Space Heating", "Baseline": base_r["spaceHeating"]["Q_purchased_kwh_y"], "Option": opt_r["spaceHeating"]["Q_purchased_kwh_y"]},
+        {"Component": "Water Heating", "Baseline": base_r["waterHeating"]["Q_purchased_kwh_y"], "Option": opt_r["waterHeating"]["Q_purchased_kwh_y"]},
+        {"Component": "Lighting", "Baseline": base_r["lighting"]["Q_total_kwh_y"], "Option": opt_r["lighting"]["Q_total_kwh_y"]},
     ])
 
-    df_water = pd.DataFrame(
-        [{"Scenario": "Baseline", "Component": k, "Value": v} for k, v in base_r["waterConsumption"]["breakdown_m3_y"].items()] +
-        [{"Scenario": "Option", "Component": k, "Value": v} for k, v in opt_r["waterConsumption"]["breakdown_m3_y"].items()]
-    )
+    # Preserve consistent ordering for water breakdown
+    water_components = list(base_r["waterConsumption"]["breakdown_m3_y"].keys())
+    df_water = pd.DataFrame([
+        {"Component": k,
+         "Baseline": base_r["waterConsumption"]["breakdown_m3_y"][k],
+         "Option": opt_r["waterConsumption"]["breakdown_m3_y"].get(k, 0.0)}
+        for k in water_components
+    ])
 
     df_carbon = pd.DataFrame([
-        {"Scenario": "Baseline", "Component": "Electricity", "Value": base_r["carbon"]["CO2_electricity_kg_y"]},
-        {"Scenario": "Baseline", "Component": "Water", "Value": base_r["carbon"]["CO2_water_kg_y"]},
-        {"Scenario": "Option", "Component": "Electricity", "Value": opt_r["carbon"]["CO2_electricity_kg_y"]},
-        {"Scenario": "Option", "Component": "Water", "Value": opt_r["carbon"]["CO2_water_kg_y"]},
+        {"Component": "Electricity", "Baseline": base_r["carbon"]["CO2_electricity_kg_y"], "Option": opt_r["carbon"]["CO2_electricity_kg_y"]},
+        {"Component": "Water", "Baseline": base_r["carbon"]["CO2_water_kg_y"], "Option": opt_r["carbon"]["CO2_water_kg_y"]},
     ])
 
     df_opex = pd.DataFrame([
-        {"Scenario": "Baseline", "Component": "Electricity", "Value": base_r["opex"]["opex_electricity_nzd_y"]},
-        {"Scenario": "Baseline", "Component": "Water", "Value": base_r["opex"]["opex_water_nzd_y"]},
-        {"Scenario": "Option", "Component": "Electricity", "Value": opt_r["opex"]["opex_electricity_nzd_y"]},
-        {"Scenario": "Option", "Component": "Water", "Value": opt_r["opex"]["opex_water_nzd_y"]},
+        {"Component": "Electricity", "Baseline": base_r["opex"]["opex_electricity_nzd_y"], "Option": opt_r["opex"]["opex_electricity_nzd_y"]},
+        {"Component": "Water", "Baseline": base_r["opex"]["opex_water_nzd_y"], "Option": opt_r["opex"]["opex_water_nzd_y"]},
+    ])
+
+    # Capex compare (NOT incremental): baseline vs option across all aspects
+    cap_components = list(base_r["capex_detail"].keys())
+    df_capex = pd.DataFrame([
+        {"Component": k,
+         "Baseline": base_r["capex_detail"][k],
+         "Option": opt_r["capex_detail"].get(k, 0.0)}
+        for k in cap_components
     ])
 
     row1 = st.columns(2, gap="large")
     with row1[0]:
-        st.pyplot(fig_grouped_barh(df_kpi, "KPIs: Baseline vs Option"))
+        st.pyplot(fig_kpi_compare_vertical(df_kpi, "KPIs: Baseline vs Option"))
     with row1[1]:
-        st.pyplot(fig_stacked_bar(df_energy, "Energy breakdown (excl. plug loads)", "kWh/year"))
+        st.pyplot(fig_bar_components_compare(df_energy, "Energy breakdown (Baseline vs Option)", "kWh/year"))
 
     row2 = st.columns(2, gap="large")
     with row2[0]:
-        st.pyplot(fig_stacked_bar(df_water, "Indoor water breakdown", "m³/year"))
+        st.pyplot(fig_bar_components_compare(df_water, "Indoor water breakdown (Baseline vs Option)", "m³/year"))
     with row2[1]:
-        st.pyplot(fig_stacked_bar(df_carbon, "Operational carbon breakdown", "kgCO₂e/year"))
+        st.pyplot(fig_bar_components_compare(df_carbon, "Operational carbon breakdown (Baseline vs Option)", "kgCO₂e/year"))
 
     row3 = st.columns(2, gap="large")
     with row3[0]:
-        st.pyplot(fig_stacked_bar(df_opex, "Opex breakdown", "NZD/year"))
+        st.pyplot(fig_bar_components_compare(df_opex, "Opex breakdown (Baseline vs Option)", "NZD/year"))
     with row3[1]:
-        st.pyplot(fig_capex_breakdown(capex["breakdown_nzd"]))
+        st.pyplot(fig_bar_components_compare(df_capex, "Capex breakdown (Baseline vs Option)", "NZD"))
 
-    # Download JSON of BOTH scenarios
+    # Download JSON
     payload = {
         "timestamp": datetime.utcnow().isoformat() + "Z",
-        "coefficients": coeffs,
-        "baseline": {"inputs": base_inputs, "results": base_r, "missing": []},
-        "option": {"inputs": opt_inputs, "results": opt_r, "missing": []},
-        "capex": capex,
+        "baseline": {"inputs": base_inputs, "coefficients": coeffs_b, "results": base_r},
+        "option": {"inputs": opt_inputs, "coefficients": coeffs_o, "results": opt_r},
+        "capex_incremental": capex_inc,
         "notes": {
             "scope": "Early-stage decision support; not certification; not simulation.",
             "energy_boundary": "Space heating + water heating + lighting (excludes plug loads/appliances).",
             "water_boundary": "Indoor water includes toilets, showers, taps, plus dishwasher/washing machine water.",
             "capex_boundary": "Transparent unit-cost accounting. Not investment-grade.",
             "hot_water_model": "Hot water derived from end-use volumes using hot water fractions (toilet excluded).",
+            "scenario_specific_tariffs_factors": "Tariffs and emission factors are stored per scenario.",
         },
     }
 
