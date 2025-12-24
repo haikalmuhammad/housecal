@@ -889,22 +889,25 @@ def usage_and_tariffs_block(prefix: str):
 def scenario_inputs_grid(prefix: str, title: str):
     st.subheader(title)
 
-    r1c1, r1c2, r1c3 = st.columns(3, gap="large")
-    r2c1, r2c2, r2c3 = st.columns(3, gap="large")
+    # Row 1 (Core / Envelope / Systems)
+    with st.expander("Row 1 — Core, Envelope, Systems", expanded=False):
+        r1c1, r1c2, r1c3 = st.columns(3, gap="large")
+        with r1c1:
+            core_inputs_block(prefix)
+        with r1c2:
+            envelope_block(prefix)
+        with r1c3:
+            systems_block(prefix)
 
-    with r1c1:
-        core_inputs_block(prefix)
-    with r1c2:
-        envelope_block(prefix)
-    with r1c3:
-        systems_block(prefix)
-
-    with r2c1:
-        fixtures_block(prefix)
-    with r2c2:
-        lighting_block(prefix)
-    with r2c3:
-        usage_and_tariffs_block(prefix)
+    # Row 2 (Fixtures / Lighting / Usage + Tariffs)
+    with st.expander("Row 2 — Fixtures, Lighting, Usage + Tariffs/Facts", expanded=False):
+        r2c1, r2c2, r2c3 = st.columns(3, gap="large")
+        with r2c1:
+            fixtures_block(prefix)
+        with r2c2:
+            lighting_block(prefix)
+        with r2c3:
+            usage_and_tariffs_block(prefix)
 
 # =============================================================================
 # KPI TABLES
