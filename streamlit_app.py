@@ -1371,7 +1371,7 @@ with tab_calc:
     # ---- LEFT: scroll-contained inputs (baseline + option)
     with left:
         # tuned for 1080p-ish: keep this shorter so results remain visible
-        INPUT_BOX_H = 520
+        INPUT_BOX_H = 680
 
         try:
             baseline_box = st.container(height=INPUT_BOX_H, border=True)
