@@ -8,6 +8,8 @@ import pandas as pd
 import streamlit as st
 import matplotlib.pyplot as plt
 import streamlit.components.v1 as components
+import altair as alt
+
 
 # =============================================================================
 # CONFIG
@@ -75,6 +77,48 @@ def inject_card_css():
         """,
         unsafe_allow_html=True
     )
+def _mk_long_df_for_breakdown(title: str, baseline: dict, option: dict | None, value_key: str, order: list[str] | None = None):
+    """
+    baseline/option are dicts like {"Space heating": 123, ...}
+    value_key: column name for values.
+    Returns a long-form DataFrame: Scenario, Component, value_key
+    """
+    rows = []
+    for k, v in baseline.items():
+        rows.append({"Scenario": "Baseline", "Component": k, value_key: float(v)})
+    if option is not None:
+        for k, v in option.items():
+            rows.append({"Scenario": "Option", "Component": k, value_key: float(v)})
+
+    df = pd.DataFrame(rows)
+
+    if order:
+        df["Component"] = pd.Categorical(df["Component"], categories=order, ordered=True)
+        df = df.sort_values(["Component", "Scenario"])
+    return df
+
+def interactive_grouped_bar(df: pd.DataFrame, value_col: str, title: str, y_label: str):
+    """
+    Streamlit-friendly interactive Altair grouped bar with tooltips.
+    """
+    if df.empty:
+        st.info("No data to chart yet.")
+        return
+
+    chart = (
+        alt.Chart(df)
+        .mark_bar()
+        .encode(
+            x=alt.X("Component:N", sort=None, title=None),
+            xOffset="Scenario:N",
+            y=alt.Y(f"{value_col}:Q", title=y_label),
+            color=alt.Color("Scenario:N", legend=alt.Legend(orient="top")),
+            tooltip=["Scenario:N", "Component:N", alt.Tooltip(f"{value_col}:Q", format=",.2f")],
+        )
+        .properties(height=280, title=title)
+        .interactive()  # enables pan/zoom in some contexts; at minimum keeps hover nice
+    )
+    st.altair_chart(chart, use_container_width=True)
 
 # =============================================================================
 # LOOKUP TABLES (Single Source of Truth)
@@ -1241,6 +1285,45 @@ with tab_calc:
             # Baseline calc (live after baseline_ready)
             b_res = None
             o_res = None
+                            st.divider()
+                st.markdown("### Interactive charts")
+
+                # ---- Energy breakdown (kWh/year)
+                b_energy_breakdown = {
+                    "Space heating": b_res["spaceHeating"]["Q_purchased_kwh_y"],
+                    "Water heating": b_res["waterHeating"]["Q_purchased_kwh_y"],
+                    "Lighting": b_res["lighting"]["Q_total_kwh_y"],
+                }
+                o_energy_breakdown = None
+                if o_res is not None:
+                    o_energy_breakdown = {
+                        "Space heating": o_res["spaceHeating"]["Q_purchased_kwh_y"],
+                        "Water heating": o_res["waterHeating"]["Q_purchased_kwh_y"],
+                        "Lighting": o_res["lighting"]["Q_total_kwh_y"],
+                    }
+
+                df_energy = _mk_long_df_for_breakdown(
+                    title="Energy breakdown",
+                    baseline=b_energy_breakdown,
+                    option=o_energy_breakdown,
+                    value_key="kWh_per_year",
+                    order=["Space heating", "Water heating", "Lighting"],
+                )
+                interactive_grouped_bar(df_energy, "kWh_per_year", "Energy breakdown (purchased electricity)", "kWh/year")
+
+                # ---- Water end-use breakdown (m³/year)
+                b_water_breakdown = b_res["waterConsumption"]["breakdown_m3_y"]
+                o_water_breakdown = o_res["waterConsumption"]["breakdown_m3_y"] if o_res is not None else None
+
+                df_water = _mk_long_df_for_breakdown(
+                    title="Water breakdown",
+                    baseline=b_water_breakdown,
+                    option=o_water_breakdown,
+                    value_key="m3_per_year",
+                    order=["Toilets", "Showers", "Taps", "Laundry", "Dishwasher"],
+                )
+                interactive_grouped_bar(df_water, "m3_per_year", "Water end-use breakdown", "m³/year")
+
 
             if not st.session_state.get("baseline_ready", False):
                 st.info("Fill Baseline inputs and click **Calculate Baseline**.")
