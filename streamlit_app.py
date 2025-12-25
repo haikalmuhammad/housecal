@@ -15,6 +15,10 @@ import streamlit.components.v1 as components
 st.set_page_config(page_title="NZ Housing Sustainability Calculator (Prototype)", layout="wide")
 PLACEHOLDER = "— Select —"
 
+# Fit typical 16:9 1080p layouts (tweak if you want tighter/looser)
+PANEL_HEIGHT_PX = 760  # left input scroll box + right results box
+RESULTS_HEIGHT_PX = 760
+
 # =============================================================================
 # HELPERS (DO NOT reference LOOKUP here)
 # =============================================================================
@@ -215,7 +219,6 @@ LOOKUP = {
 # =============================================================================
 def build_help(LOOKUP):
     return {
-        # Core / climate
         "closest_city": help_default_source(
             what="Closest major city used to infer Climate Zone and Heating Degree Days (HDD, base 18°C).",
             default="—",
@@ -234,7 +237,6 @@ def build_help(LOOKUP):
             units="degree-days/year",
             source="User override (otherwise from climate zone defaults)"
         ),
-        # Core geometry
         "floor_area": help_default_source(
             what="Conditioned floor area used in heat-loss geometry and intensity metrics.",
             default=float(LOOKUP["defaults"]["core"]["floorArea"]),
@@ -259,7 +261,6 @@ def build_help(LOOKUP):
             units="m²",
             source="Model default (editable)"
         ),
-        # Lighting
         "light_n": help_default_source(
             what="Total number of light fixtures.",
             default=int(LOOKUP["defaults"]["lighting"]["numberOfLights"]),
@@ -277,7 +278,6 @@ def build_help(LOOKUP):
             units="hours/day",
             source="Model default (editable)"
         ),
-        # Envelope / systems
         "r_value": help_default_source(
             what="R-value (m²K/W): higher is better insulation (lower heat loss).",
             source="MBIE (2023); BRANZ (2023) banded defaults embedded in this tool",
@@ -292,7 +292,6 @@ def build_help(LOOKUP):
             what="COP (Coefficient of Performance): higher means less purchased electricity for the same delivered heat.",
             source="BRANZ (2023) typical systems embedded in this tool"
         ),
-        # Fixtures / appliances
         "fixture": help_default_source(
             what="Select fixture type to set water use rate and install capex.",
             source="BRANZ (2023) typical fixtures embedded in this tool",
@@ -308,7 +307,6 @@ def build_help(LOOKUP):
             default=bool(LOOKUP["defaults"]["dishwasher"]["hasAppliance"]),
             source="Model default (editable)"
         ),
-        # Usage / fractions
         "usage_general": help_default_source(
             what="Behavioural assumptions for indoor water end-uses (per person).",
             source="Model defaults (editable)",
@@ -319,7 +317,6 @@ def build_help(LOOKUP):
             default="Shower 0.9; Tap 0.4; Laundry 0.5; Dishwasher 1.0",
             source="BRANZ (2023) placeholders + user override"
         ),
-        # Tariffs / emissions
         "tariffs": help_default_source(
             what="Retail tariffs vary by region/provider; set to match your bill.",
             default=f"Electricity {LOOKUP['constants']['electricity_tariff_nzd_per_kwh_default']} NZD/kWh; Water {LOOKUP['constants']['water_tariff_nzd_per_m3_default']} NZD/m³",
@@ -655,7 +652,6 @@ def calculate_scenario(s: dict, coeffs: dict) -> dict:
     carbon = calculate_operational_carbon(total_electricity_kwh_y, water_use["V_total_m3_y"], coeffs)
     opex = calculate_opex(total_electricity_kwh_y, water_use["V_total_m3_y"], coeffs)
     energy_intensity = (total_electricity_kwh_y / s["floorArea"]) if s["floorArea"] > 0 else 0.0
-
     capex = compute_capex_total(s)
 
     return {
@@ -1126,7 +1122,6 @@ def scenario_panel(prefix: str, title: str):
             reset_scenario(prefix)
             st.rerun()
 
-    # 1) Core + Climate + Lighting (core)
     with st.expander("Core climate + lighting", expanded=True):
         cc1, cc2 = st.columns(2, gap="small")
 
@@ -1149,30 +1144,10 @@ def scenario_panel(prefix: str, title: str):
                 )
                 st.caption(f"Using custom HDD: **{float(st.session_state[f'{prefix}_hdd_override_value']):g}**")
 
-            st.number_input(
-                "Floor area (m²)",
-                min_value=20.0, max_value=500.0, step=5.0,
-                key=f"{prefix}_floorArea",
-                help=HELP["floor_area"],
-            )
-            st.number_input(
-                "Ceiling height (m)",
-                min_value=2.0, max_value=4.0, step=0.1,
-                key=f"{prefix}_ceilingHeight",
-                help=HELP["ceiling_height"],
-            )
-            st.number_input(
-                "Household size (people)",
-                min_value=1, max_value=12, step=1,
-                key=f"{prefix}_householdSize",
-                help=HELP["household_size"],
-            )
-            st.number_input(
-                "Total window area (m²)",
-                min_value=0.0, max_value=200.0, step=5.0,
-                key=f"{prefix}_windowArea",
-                help=HELP["window_area"],
-            )
+            st.number_input("Floor area (m²)", min_value=20.0, max_value=500.0, step=5.0, key=f"{prefix}_floorArea", help=HELP["floor_area"])
+            st.number_input("Ceiling height (m)", min_value=2.0, max_value=4.0, step=0.1, key=f"{prefix}_ceilingHeight", help=HELP["ceiling_height"])
+            st.number_input("Household size (people)", min_value=1, max_value=12, step=1, key=f"{prefix}_householdSize", help=HELP["household_size"])
+            st.number_input("Total window area (m²)", min_value=0.0, max_value=200.0, step=5.0, key=f"{prefix}_windowArea", help=HELP["window_area"])
 
         with cc2:
             st.markdown("**Lighting**")
@@ -1181,7 +1156,6 @@ def scenario_panel(prefix: str, title: str):
             st.number_input("Lighting hours/day", min_value=0.0, max_value=24.0, step=0.5, key=f"{prefix}_light_hours", help=HELP["light_hours"])
             st.caption("Formula: count × watts × hours/day × 365 ÷ 1000")
 
-    # 2) Envelope + Systems + Waters (core)
     with st.expander("Envelope + systems + water", expanded=False):
         ec1, ec2 = st.columns(2, gap="small")
 
@@ -1264,7 +1238,6 @@ def scenario_panel(prefix: str, title: str):
                     st.number_input("Cycles/week (dishwasher)", min_value=0.0, max_value=50.0, step=1.0, key=f"{prefix}_dish_cycles")
                     st.number_input("L/cycle (dishwasher)", min_value=0.0, max_value=100.0, step=1.0, key=f"{prefix}_dish_L")
 
-    # 3) Optional: usage + fractions + tariffs + emissions
     with st.expander("Optional: usage + fractions + tariffs + emissions", expanded=False):
         st.caption("Use this section only if you want to tailor behaviour assumptions or local pricing/factors.")
         oc1, oc2 = st.columns(2, gap="small")
@@ -1291,6 +1264,182 @@ def scenario_panel(prefix: str, title: str):
                 st.number_input("Water tariff (NZD/m³)", min_value=0.0, max_value=20.0, step=0.1, key=f"{prefix}_coef_water_tariff", help=HELP["tariffs"])
                 st.number_input("Grid emission factor (kgCO₂e/kWh)", min_value=0.0, max_value=1.0, step=0.0001, key=f"{prefix}_coef_grid_ef", help=HELP["efs"])
                 st.number_input("Water emission factor (kgCO₂e/m³)", min_value=0.0, max_value=5.0, step=0.0001, key=f"{prefix}_coef_water_ef", help=HELP["efs"])
+
+# =============================================================================
+# RESULTS: KPI CARDS (3 rows x 2 columns)
+# =============================================================================
+def _safe_delta(b, o):
+    if b is None or o is None:
+        return None
+    return o - b
+
+def _kpi_value(res: dict, key: str):
+    # Small indirection in case you later refactor fields
+    return res.get(key)
+
+def _compute_simple_payback_years(b_res: dict, o_res: dict):
+    inc_capex = o_res["capex"]["capex_total_nzd"] - b_res["capex"]["capex_total_nzd"]
+    savings = b_res["opex"]["opex_total_nzd_y"] - o_res["opex"]["opex_total_nzd_y"]
+    if inc_capex <= 0:
+        return 0.0, "No additional capex (option ≤ baseline capex)."
+    if savings <= 0:
+        return None, "No payback (opex savings ≤ 0)."
+    return inc_capex / savings, ""
+
+def render_kpi_cards(b_res: dict | None, o_res: dict | None):
+    st.markdown(
+        """
+        <style>
+          .kpi-grid{
+            display:grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 12px;
+            margin-top: 6px;
+          }
+          .kpi-card{
+            border: 1px solid rgba(49,51,63,.2);
+            border-radius: 12px;
+            padding: 12px 12px 10px 12px;
+            background: rgba(255,255,255,0.02);
+          }
+          .kpi-title{
+            font-size: 0.95rem;
+            font-weight: 700;
+            line-height: 1.2;
+            margin-bottom: 2px;
+          }
+          .kpi-unit{
+            font-size: 0.8rem;
+            opacity: 0.7;
+            margin-bottom: 10px;
+          }
+          .kpi-row{
+            display:flex;
+            justify-content: space-between;
+            gap: 10px;
+            margin: 2px 0;
+            font-size: 0.92rem;
+          }
+          .kpi-label{
+            opacity: 0.75;
+            white-space: nowrap;
+          }
+          .kpi-val{
+            font-weight: 700;
+            text-align: right;
+          }
+          .kpi-delta{
+            font-weight: 800;
+          }
+          .kpi-foot{
+            margin-top: 8px;
+            font-size: 0.82rem;
+            opacity: 0.75;
+          }
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    def card_html(title, unit, b, o, d, note=""):
+        def _v(x): return x if x is not None else "—"
+        delta_arrow = ""
+        if d is not None:
+            delta_arrow = " " + direction_arrow(d)
+        return f"""
+          <div class="kpi-card">
+            <div class="kpi-title">{title}</div>
+            <div class="kpi-unit">{unit}</div>
+            <div class="kpi-row"><div class="kpi-label">Baseline</div><div class="kpi-val">{_v(b)}</div></div>
+            <div class="kpi-row"><div class="kpi-label">Option</div><div class="kpi-val">{_v(o)}</div></div>
+            <div class="kpi-row"><div class="kpi-label">Δ (Option − Baseline)</div><div class="kpi-val kpi-delta">{_v(d)}{delta_arrow}</div></div>
+            {f'<div class="kpi-foot">{note}</div>' if note else ''}
+          </div>
+        """
+
+    if b_res is None:
+        st.info("Fill Baseline inputs and click **Calculate Baseline** to show results.")
+        return
+
+    # Baseline values
+    b_energy = b_res["totalElectricity_kwh_y"]
+    b_water = b_res["waterConsumption"]["V_total_m3_y"]
+    b_carbon = b_res["carbon"]["CO2_total_kg_y"]
+    b_opex = b_res["opex"]["opex_total_nzd_y"]
+    b_capex = b_res["capex"]["capex_total_nzd"]
+
+    # Option values (optional)
+    o_energy = o_water = o_carbon = o_opex = o_capex = None
+    if o_res is not None:
+        o_energy = o_res["totalElectricity_kwh_y"]
+        o_water = o_res["waterConsumption"]["V_total_m3_y"]
+        o_carbon = o_res["carbon"]["CO2_total_kg_y"]
+        o_opex = o_res["opex"]["opex_total_nzd_y"]
+        o_capex = o_res["capex"]["capex_total_nzd"]
+
+    # Deltas (optional)
+    d_energy = _safe_delta(b_energy, o_energy)
+    d_water = _safe_delta(b_water, o_water)
+    d_carbon = _safe_delta(b_carbon, o_carbon)
+    d_opex = _safe_delta(b_opex, o_opex)
+    d_capex = _safe_delta(b_capex, o_capex)
+
+    # Payback
+    pb_val = None
+    pb_note = ""
+    if o_res is not None:
+        pb_val, pb_note = _compute_simple_payback_years(b_res, o_res)
+
+    pb_display = fmt_num(pb_val, 1) if pb_val is not None else "—"
+    inc_capex = (o_capex - b_capex) if (o_capex is not None) else None
+    dec_opex = (b_opex - o_opex) if (o_opex is not None) else None
+    pb_formula = ""
+    if o_res is not None:
+        pb_formula = f"Payback = (Δ Capex) / (↓ Opex) = {fmt_money(inc_capex) if inc_capex is not None else '—'} / {fmt_money(dec_opex) if dec_opex is not None else '—'}"
+
+    html = """
+      <div class="kpi-grid">
+    """
+    html += card_html(
+        "Total energy use", "kWh/year",
+        fmt_num(b_energy, 1),
+        fmt_num(o_energy, 1) if o_energy is not None else None,
+        fmt_num(d_energy, 1) if d_energy is not None else None,
+    )
+    html += card_html(
+        "Total water use", "m³/year",
+        fmt_num(b_water, 2),
+        fmt_num(o_water, 2) if o_water is not None else None,
+        fmt_num(d_water, 2) if d_water is not None else None,
+    )
+    html += card_html(
+        "Operational carbon", "kgCO₂e/year",
+        fmt_num(b_carbon, 1),
+        fmt_num(o_carbon, 1) if o_carbon is not None else None,
+        fmt_num(d_carbon, 1) if d_carbon is not None else None,
+    )
+    html += card_html(
+        "Operational expenditure", "NZD/year",
+        fmt_money(b_opex, 0),
+        fmt_money(o_opex, 0) if o_opex is not None else None,
+        fmt_money(d_opex, 0) if d_opex is not None else None,
+    )
+    html += card_html(
+        "Capital expenditure", "NZD (total)",
+        fmt_money(b_capex, 0),
+        fmt_money(o_capex, 0) if o_capex is not None else None,
+        fmt_money(d_capex, 0) if d_capex is not None else None,
+    )
+    html += card_html(
+        "Simple payback years", "years",
+        "—" if o_res is None else "n/a",
+        "—" if o_res is None else "n/a",
+        pb_display if o_res is not None else "—",
+        note=(pb_formula + (f" · {pb_note}" if pb_note else "")) if o_res is not None else "Payback appears after Option is calculated.",
+    )
+    html += "</div>"
+
+    st.markdown(html, unsafe_allow_html=True)
 
 # =============================================================================
 # FORMULAS TAB CONTENT
@@ -1365,70 +1514,6 @@ def render_data_sources_tab():
     st.dataframe(df, hide_index=True, use_container_width=True)
 
 # =============================================================================
-# KPI CARDS
-# =============================================================================
-def _delta_text(delta: float, is_money: bool, dec: int, unit: str):
-    arrow = direction_arrow(delta)
-    if is_money:
-        d_str = fmt_money(delta, 0)
-    else:
-        d_str = fmt_num(delta, dec)
-        if unit:
-            d_str = f"{d_str} {unit}"
-    return f"{arrow} {d_str}"
-
-def render_kpi_card(title: str, unit: str, b_val, o_val, dec: int = 1, is_money: bool = False):
-    delta = None if (b_val is None or o_val is None) else (o_val - b_val)
-
-    if is_money:
-        b_str = fmt_money(b_val, 0)
-        o_str = fmt_money(o_val, 0)
-        d_str = _delta_text(delta, True, dec, unit) if delta is not None else "—"
-    else:
-        b_str = f"{fmt_num(b_val, dec)} {unit}".strip()
-        o_str = f"{fmt_num(o_val, dec)} {unit}".strip()
-        d_str = _delta_text(delta, False, dec, unit) if delta is not None else "—"
-
-    st.markdown(
-        f"""
-        <div class="kpi-card">
-          <div class="kpi-title">{title} <span class="kpi-unit">({unit})</span></div>
-          <div class="kpi-row"><span class="kpi-label">Baseline</span><span class="kpi-value">{b_str}</span></div>
-          <div class="kpi-row"><span class="kpi-label">Option</span><span class="kpi-value">{o_str}</span></div>
-          <div class="kpi-row kpi-delta"><span class="kpi-label">Δ (Option − Base)</span><span class="kpi-value">{d_str}</span></div>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
-
-def render_payback_card(inc_capex: float, opex_savings: float):
-    if inc_capex <= 0:
-        pb = 0.0
-        note = "No additional capex (option ≤ baseline capex)."
-    elif opex_savings <= 0:
-        pb = None
-        note = "No payback (opex savings ≤ 0)."
-    else:
-        pb = inc_capex / opex_savings
-        note = ""
-
-    pb_str = f"{fmt_num(pb, 1)} years" if pb is not None else "—"
-
-    st.markdown(
-        f"""
-        <div class="kpi-card">
-          <div class="kpi-title">Simple payback <span class="kpi-unit">(years)</span></div>
-          <div class="kpi-row"><span class="kpi-label">Formula</span><span class="kpi-value">ΔCapex ÷ ΔOpex savings</span></div>
-          <div class="kpi-row"><span class="kpi-label">ΔCapex</span><span class="kpi-value">{fmt_money(inc_capex, 0)}</span></div>
-          <div class="kpi-row"><span class="kpi-label">Opex savings</span><span class="kpi-value">{fmt_money(opex_savings, 0)} /y</span></div>
-          <div class="kpi-row kpi-delta"><span class="kpi-label">Payback</span><span class="kpi-value">{pb_str}</span></div>
-          <div class="kpi-note">{note}</div>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
-
-# =============================================================================
 # APP START
 # =============================================================================
 init_defaults()
@@ -1450,56 +1535,9 @@ SHOWER_OPTS = list(LOOKUP["fixtures"]["shower"]["l_per_min"].keys()) + ["Custom"
 TAP_OPTS = list(LOOKUP["fixtures"]["tap"]["l_per_min"].keys()) + ["Custom"]
 
 st.title("NZ Housing Sustainability Calculator (Prototype)")
-st.caption("Early-stage comparison tool. Simplified, indicative, non-certification. Baseline → unlock Option → Compare. After activation, results update automatically as you edit inputs.")
-
-# Card styling
-st.markdown(
-    """
-    <style>
-      .kpi-card{
-        border: 1px solid rgba(49,51,63,0.18);
-        border-radius: 14px;
-        padding: 14px 14px 12px 14px;
-        margin: 0 0 12px 0;
-        background: rgba(255,255,255,0.02);
-      }
-      .kpi-title{
-        font-weight: 700;
-        font-size: 0.98rem;
-        margin-bottom: 8px;
-      }
-      .kpi-unit{
-        font-weight: 500;
-        font-size: 0.86rem;
-        opacity: 0.75;
-      }
-      .kpi-row{
-        display:flex;
-        justify-content:space-between;
-        gap:10px;
-        padding: 3px 0;
-        font-size: 0.92rem;
-      }
-      .kpi-label{
-        opacity: 0.78;
-      }
-      .kpi-value{
-        font-weight: 650;
-        text-align:right;
-      }
-      .kpi-delta{
-        margin-top: 6px;
-        padding-top: 8px;
-        border-top: 1px dashed rgba(49,51,63,0.22);
-      }
-      .kpi-note{
-        margin-top: 6px;
-        font-size: 0.85rem;
-        opacity: 0.75;
-      }
-    </style>
-    """,
-    unsafe_allow_html=True,
+st.caption(
+    "Early-stage comparison tool. Simplified, indicative, non-certification. "
+    "Baseline → unlock Option → Compare. After activation, results update automatically as you edit inputs."
 )
 
 tab_calc, tab_formulas, tab_sources = st.tabs(["Calculator", "Formulas", "Data sources"])
@@ -1510,21 +1548,21 @@ tab_calc, tab_formulas, tab_sources = st.tabs(["Calculator", "Formulas", "Data s
 with tab_calc:
     left, right = st.columns([1.45, 1.0], gap="large")
 
-    # Make the whole inputs area scrollable so results stay visible on the right
+    # LEFT: put inputs inside a scroll box
     with left:
         try:
-            inputs_box = st.container(height=820, border=True)
+            input_box = st.container(height=PANEL_HEIGHT_PX, border=True)
         except TypeError:
-            inputs_box = st.container()
+            input_box = st.container()
 
-        with inputs_box:
+        with input_box:
             scenario_panel("b", "Baseline")
 
             b_now = get_scenario("b")
             missing_b = validate_scenario(b_now)
 
+            st.divider()
             if not st.session_state["baseline_ready"]:
-                st.divider()
                 if missing_b:
                     st.info("Baseline incomplete. Missing: " + ", ".join(missing_b))
                 if st.button("Calculate Baseline", use_container_width=True, disabled=bool(missing_b)):
@@ -1533,6 +1571,8 @@ with tab_calc:
                     if not st.session_state.get("option_seeded", False):
                         seed_option_from_baseline_once()
                     st.rerun()
+            else:
+                st.success("Baseline calculated. Option is unlocked.")
 
             if st.session_state.get("option_unlocked", False):
                 st.divider()
@@ -1541,26 +1581,30 @@ with tab_calc:
                 o_now = get_scenario("o")
                 missing_o = validate_scenario(o_now)
 
+                st.divider()
                 if not st.session_state.get("compare_ready", False):
-                    st.divider()
                     if missing_o:
                         st.info("Option incomplete. Missing: " + ", ".join(missing_o))
                     if st.button("Calculate & Compare", use_container_width=True, disabled=bool(missing_o)):
                         st.session_state["compare_ready"] = True
                         st.rerun()
+                else:
+                    st.success("Comparison activated. Results update live as you edit.")
 
+    # RIGHT: results inside a scroll box, with the title inside that box
     with right:
-        st.subheader("Results")
-
         try:
-            results_box = st.container(height=820, border=True)
+            results_box = st.container(height=RESULTS_HEIGHT_PX, border=True)
         except TypeError:
             results_box = st.container()
 
         with results_box:
-            if not st.session_state.get("baseline_ready", False):
-                st.info("Fill Baseline inputs and click **Calculate Baseline** to show results.")
-            else:
+            st.markdown("## Results")  # 1) title inside the box
+
+            b_res = None
+            o_res = None
+
+            if st.session_state.get("baseline_ready", False):
                 b_now = get_scenario("b")
                 missing_b = validate_scenario(b_now)
                 if missing_b:
@@ -1569,142 +1613,92 @@ with tab_calc:
                     b_res = calculate_scenario(b_now, get_coeffs("b"))
                     st.session_state["baseline_results"] = b_res
 
-                    if not st.session_state.get("compare_ready", False):
-                        st.info("Option is unlocked. Edit Option inputs on the left, then click **Calculate & Compare** once. After that, results update live.")
-                    else:
-                        o_now = get_scenario("o")
-                        missing_o = validate_scenario(o_now)
-                        if missing_o:
-                            st.warning("Option incomplete. Missing: " + ", ".join(missing_o))
-                        else:
-                            o_res = calculate_scenario(o_now, get_coeffs("o"))
-                            st.session_state["option_results"] = o_res
+            if st.session_state.get("compare_ready", False):
+                o_now = get_scenario("o")
+                missing_o = validate_scenario(o_now)
+                if missing_o:
+                    st.warning("Option incomplete. Missing: " + ", ".join(missing_o))
+                else:
+                    o_res = calculate_scenario(o_now, get_coeffs("o"))
+                    st.session_state["option_results"] = o_res
 
-                            # --- KPI Cards (3 rows x 2 columns) ---
-                            r1c1, r1c2 = st.columns(2, gap="small")
-                            with r1c1:
-                                render_kpi_card(
-                                    "Total energy use",
-                                    "kWh/y",
-                                    b_res["totalElectricity_kwh_y"],
-                                    o_res["totalElectricity_kwh_y"],
-                                    dec=1,
-                                    is_money=False,
-                                )
-                            with r1c2:
-                                render_kpi_card(
-                                    "Total water use",
-                                    "m³/y",
-                                    b_res["waterConsumption"]["V_total_m3_y"],
-                                    o_res["waterConsumption"]["V_total_m3_y"],
-                                    dec=2,
-                                    is_money=False,
-                                )
+            # 3) baseline cards appear immediately after Calculate Baseline,
+            #    and then those same cards show option+delta after Calculate & Compare.
+            render_kpi_cards(b_res, o_res)
 
-                            r2c1, r2c2 = st.columns(2, gap="small")
-                            with r2c1:
-                                render_kpi_card(
-                                    "Operational carbon",
-                                    "kgCO₂e/y",
-                                    b_res["carbon"]["CO2_total_kg_y"],
-                                    o_res["carbon"]["CO2_total_kg_y"],
-                                    dec=1,
-                                    is_money=False,
-                                )
-                            with r2c2:
-                                render_kpi_card(
-                                    "Operational expenditure",
-                                    "NZD/y",
-                                    b_res["opex"]["opex_total_nzd_y"],
-                                    o_res["opex"]["opex_total_nzd_y"],
-                                    dec=0,
-                                    is_money=True,
-                                )
+            # Optional: keep your deep-dive visuals, but hide them by default so the box stays "short"
+            with st.expander("Details (charts + export)", expanded=False):
+                if b_res is None:
+                    st.info("Calculate Baseline first.")
+                elif o_res is None:
+                    st.info("Calculate & Compare to see comparative charts and export.")
+                else:
+                    st.markdown("### Charts (all vertical bars)")
 
-                            r3c1, r3c2 = st.columns(2, gap="small")
-                            with r3c1:
-                                render_kpi_card(
-                                    "Capital expenditure",
-                                    "NZD",
-                                    b_res["capex"]["capex_total_nzd"],
-                                    o_res["capex"]["capex_total_nzd"],
-                                    dec=0,
-                                    is_money=True,
-                                )
-                            with r3c2:
-                                inc_capex = o_res["capex"]["capex_total_nzd"] - b_res["capex"]["capex_total_nzd"]
-                                savings = b_res["opex"]["opex_total_nzd_y"] - o_res["opex"]["opex_total_nzd_y"]
-                                render_payback_card(inc_capex, savings)
+                    df_kpi = pd.DataFrame([
+                        {"Metric": "Energy", "Baseline": b_res["totalElectricity_kwh_y"], "Option": o_res["totalElectricity_kwh_y"]},
+                        {"Metric": "Water", "Baseline": b_res["waterConsumption"]["V_total_m3_y"], "Option": o_res["waterConsumption"]["V_total_m3_y"]},
+                        {"Metric": "Carbon", "Baseline": b_res["carbon"]["CO2_total_kg_y"], "Option": o_res["carbon"]["CO2_total_kg_y"]},
+                        {"Metric": "Opex", "Baseline": b_res["opex"]["opex_total_nzd_y"], "Option": o_res["opex"]["opex_total_nzd_y"]},
+                    ])
+                    st.pyplot(fig_grouped_bar_vertical(df_kpi, "KPIs: Baseline vs Option", "Value"))
 
-                            st.divider()
-                            st.markdown("### Charts (all vertical bars)")
+                    df_energy = pd.DataFrame([
+                        {"Scenario": "Baseline", "Component": "Space Heating", "Value": b_res["spaceHeating"]["Q_purchased_kwh_y"]},
+                        {"Scenario": "Baseline", "Component": "Water Heating", "Value": b_res["waterHeating"]["Q_purchased_kwh_y"]},
+                        {"Scenario": "Baseline", "Component": "Lighting", "Value": b_res["lighting"]["Q_total_kwh_y"]},
+                        {"Scenario": "Option", "Component": "Space Heating", "Value": o_res["spaceHeating"]["Q_purchased_kwh_y"]},
+                        {"Scenario": "Option", "Component": "Water Heating", "Value": o_res["waterHeating"]["Q_purchased_kwh_y"]},
+                        {"Scenario": "Option", "Component": "Lighting", "Value": o_res["lighting"]["Q_total_kwh_y"]},
+                    ])
+                    st.pyplot(fig_stacked_bar_vertical(df_energy, "Energy breakdown (excl. plug loads)", "kWh/y"))
 
-                            df_kpi = pd.DataFrame([
-                                {"Metric": "Energy", "Baseline": b_res["totalElectricity_kwh_y"], "Option": o_res["totalElectricity_kwh_y"]},
-                                {"Metric": "Water", "Baseline": b_res["waterConsumption"]["V_total_m3_y"], "Option": o_res["waterConsumption"]["V_total_m3_y"]},
-                                {"Metric": "Carbon", "Baseline": b_res["carbon"]["CO2_total_kg_y"], "Option": o_res["carbon"]["CO2_total_kg_y"]},
-                                {"Metric": "Opex", "Baseline": b_res["opex"]["opex_total_nzd_y"], "Option": o_res["opex"]["opex_total_nzd_y"]},
-                            ])
-                            st.pyplot(fig_grouped_bar_vertical(df_kpi, "KPIs: Baseline vs Option", "Value"))
+                    b_w = b_res["waterConsumption"]["breakdown_m3_y"]
+                    o_w = o_res["waterConsumption"]["breakdown_m3_y"]
+                    df_water = pd.DataFrame(
+                        [{"Scenario": "Baseline", "Component": k, "Value": v} for k, v in b_w.items()] +
+                        [{"Scenario": "Option", "Component": k, "Value": v} for k, v in o_w.items()]
+                    )
+                    st.pyplot(fig_stacked_bar_vertical(df_water, "Indoor water breakdown", "m³/y"))
 
-                            df_energy = pd.DataFrame([
-                                {"Scenario": "Baseline", "Component": "Space Heating", "Value": b_res["spaceHeating"]["Q_purchased_kwh_y"]},
-                                {"Scenario": "Baseline", "Component": "Water Heating", "Value": b_res["waterHeating"]["Q_purchased_kwh_y"]},
-                                {"Scenario": "Baseline", "Component": "Lighting", "Value": b_res["lighting"]["Q_total_kwh_y"]},
-                                {"Scenario": "Option", "Component": "Space Heating", "Value": o_res["spaceHeating"]["Q_purchased_kwh_y"]},
-                                {"Scenario": "Option", "Component": "Water Heating", "Value": o_res["waterHeating"]["Q_purchased_kwh_y"]},
-                                {"Scenario": "Option", "Component": "Lighting", "Value": o_res["lighting"]["Q_total_kwh_y"]},
-                            ])
-                            st.pyplot(fig_stacked_bar_vertical(df_energy, "Energy breakdown (excl. plug loads)", "kWh/y"))
+                    df_carbon = pd.DataFrame([
+                        {"Scenario": "Baseline", "Component": "Electricity", "Value": b_res["carbon"]["CO2_electricity_kg_y"]},
+                        {"Scenario": "Baseline", "Component": "Water", "Value": b_res["carbon"]["CO2_water_kg_y"]},
+                        {"Scenario": "Option", "Component": "Electricity", "Value": o_res["carbon"]["CO2_electricity_kg_y"]},
+                        {"Scenario": "Option", "Component": "Water", "Value": o_res["carbon"]["CO2_water_kg_y"]},
+                    ])
+                    st.pyplot(fig_stacked_bar_vertical(df_carbon, "Operational carbon breakdown", "kgCO₂e/y"))
 
-                            b_w = b_res["waterConsumption"]["breakdown_m3_y"]
-                            o_w = o_res["waterConsumption"]["breakdown_m3_y"]
-                            df_water = pd.DataFrame(
-                                [{"Scenario": "Baseline", "Component": k, "Value": v} for k, v in b_w.items()] +
-                                [{"Scenario": "Option", "Component": k, "Value": v} for k, v in o_w.items()]
-                            )
-                            st.pyplot(fig_stacked_bar_vertical(df_water, "Indoor water breakdown", "m³/y"))
+                    df_opex = pd.DataFrame([
+                        {"Scenario": "Baseline", "Component": "Electricity", "Value": b_res["opex"]["opex_electricity_nzd_y"]},
+                        {"Scenario": "Baseline", "Component": "Water", "Value": b_res["opex"]["opex_water_nzd_y"]},
+                        {"Scenario": "Option", "Component": "Electricity", "Value": o_res["opex"]["opex_electricity_nzd_y"]},
+                        {"Scenario": "Option", "Component": "Water", "Value": o_res["opex"]["opex_water_nzd_y"]},
+                    ])
+                    st.pyplot(fig_stacked_bar_vertical(df_opex, "Opex breakdown", "NZD/y"))
 
-                            df_carbon = pd.DataFrame([
-                                {"Scenario": "Baseline", "Component": "Electricity", "Value": b_res["carbon"]["CO2_electricity_kg_y"]},
-                                {"Scenario": "Baseline", "Component": "Water", "Value": b_res["carbon"]["CO2_water_kg_y"]},
-                                {"Scenario": "Option", "Component": "Electricity", "Value": o_res["carbon"]["CO2_electricity_kg_y"]},
-                                {"Scenario": "Option", "Component": "Water", "Value": o_res["carbon"]["CO2_water_kg_y"]},
-                            ])
-                            st.pyplot(fig_stacked_bar_vertical(df_carbon, "Operational carbon breakdown", "kgCO₂e/y"))
+                    st.pyplot(fig_capex_compare(b_res["capex"]["detail_breakdown_nzd"], o_res["capex"]["detail_breakdown_nzd"]))
 
-                            df_opex = pd.DataFrame([
-                                {"Scenario": "Baseline", "Component": "Electricity", "Value": b_res["opex"]["opex_electricity_nzd_y"]},
-                                {"Scenario": "Baseline", "Component": "Water", "Value": b_res["opex"]["opex_water_nzd_y"]},
-                                {"Scenario": "Option", "Component": "Electricity", "Value": o_res["opex"]["opex_electricity_nzd_y"]},
-                                {"Scenario": "Option", "Component": "Water", "Value": o_res["opex"]["opex_water_nzd_y"]},
-                            ])
-                            st.pyplot(fig_stacked_bar_vertical(df_opex, "Opex breakdown", "NZD/y"))
+                    payload = {
+                        "timestamp": datetime.utcnow().isoformat() + "Z",
+                        "baseline": {"coefficients": get_coeffs("b"), "inputs": get_scenario("b"), "results": b_res},
+                        "option": {"coefficients": get_coeffs("o"), "inputs": get_scenario("o"), "results": o_res},
+                        "notes": {
+                            "scope": "Early-stage decision support; not certification; not simulation.",
+                            "energy_boundary": "Space heating + water heating + lighting (excludes plug loads/appliances).",
+                            "water_boundary": "Indoor water includes toilets, showers, taps, plus dishwasher/washing machine water.",
+                            "capex_boundary": "Transparent unit-cost accounting. Not investment-grade.",
+                            "hot_water_model": "Hot water derived from end-use volumes using hot water fractions (toilet excluded).",
+                        },
+                    }
 
-                            st.pyplot(fig_capex_compare(b_res["capex"]["detail_breakdown_nzd"], o_res["capex"]["detail_breakdown_nzd"]))
-
-                            st.divider()
-
-                            payload = {
-                                "timestamp": datetime.utcnow().isoformat() + "Z",
-                                "baseline": {"coefficients": get_coeffs("b"), "inputs": b_now, "results": b_res},
-                                "option": {"coefficients": get_coeffs("o"), "inputs": o_now, "results": o_res},
-                                "notes": {
-                                    "scope": "Early-stage decision support; not certification; not simulation.",
-                                    "energy_boundary": "Space heating + water heating + lighting (excludes plug loads/appliances).",
-                                    "water_boundary": "Indoor water includes toilets, showers, taps, plus dishwasher/washing machine water.",
-                                    "capex_boundary": "Transparent unit-cost accounting. Not investment-grade.",
-                                    "hot_water_model": "Hot water derived from end-use volumes using hot water fractions (toilet excluded).",
-                                },
-                            }
-
-                            st.download_button(
-                                "Download results (JSON)",
-                                data=json.dumps(payload, indent=2),
-                                file_name=f"housing-sustainability-comparison-{int(datetime.utcnow().timestamp())}.json",
-                                mime="application/json",
-                                use_container_width=True,
-                            )
+                    st.download_button(
+                        "Download results (JSON)",
+                        data=json.dumps(payload, indent=2),
+                        file_name=f"housing-sustainability-comparison-{int(datetime.utcnow().timestamp())}.json",
+                        mime="application/json",
+                        use_container_width=True,
+                    )
 
 # =============================================================================
 # TAB 2: FORMULAS
