@@ -16,7 +16,7 @@ st.set_page_config(page_title="NZ Housing Sustainability Calculator (Prototype)"
 PLACEHOLDER = "— Select —"
 
 # Build stamp
-st.caption("BUILD: 2025-12-25 vREFACTORED+UXWRITING")
+st.caption("BUILD: 2025-12-25 vREFACTORED UXWRITING")
 
 # =============================================================================
 # MINIMAL CSS (cards + sticky action bar)
