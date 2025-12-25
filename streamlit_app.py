@@ -1387,8 +1387,8 @@ tab_calc, tab_formulas, tab_sources = st.tabs(["Calculator", "Formulas", "Data s
 with tab_calc:
     left, right = st.columns([1, 1], gap="large")
 
-    INPUT_H = 600
-    RESULTS_H = 800
+    INPUT_H = 640
+    RESULTS_H = 720
 
     # -------------------------
     # LEFT: inputs (scroll box) + ACTION BAR (always visible below)
@@ -1438,7 +1438,6 @@ with tab_calc:
         # Baseline action
         if not st.session_state["baseline_ready"]:
             disabled = bool(missing_b)
-            st.caption("Step 1: Calculate Baseline (required).")
             st.button(
                 "Calculate Baseline",
                 use_container_width=True,
