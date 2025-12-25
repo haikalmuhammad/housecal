@@ -30,7 +30,7 @@ def inject_theme_css():
         /* Tabs: active underline + text */
         .stTabs [data-baseweb="tab-list"] button[aria-selected="true"]{
           color: var(--primary-color) !important;
-          border-bottom: 3px solid var(--primary-color) !important;
+          border-bottom: 3 solid var(--primary-color) !important;
         }
         .stTabs [data-baseweb="tab-list"] button[aria-selected="false"]{
           color: rgba(0,0,0,0.72) !important;
@@ -38,18 +38,18 @@ def inject_theme_css():
 
         /* Selectbox / inputs: focus ring */
         [data-baseweb="select"] > div:focus-within{
-          box-shadow: 0 0 0 2px rgba(22,163,74,0.25) !important;
+          box-shadow: 0 0 0 2 rgba(22,163,74,0.25) !important;
           border-color: var(--primary-color) !important;
         }
         input:focus, textarea:focus{
           outline: none !important;
-          box-shadow: 0 0 0 2px rgba(22,163,74,0.25) !important;
+          box-shadow: 0 0 0 2 rgba(22,163,74,0.25) !important;
           border-color: var(--primary-color) !important;
         }
 
         /* Checkbox / radio / slider accents (best-effort) */
         [data-baseweb="checkbox"] input:focus + div{
-          box-shadow: 0 0 0 2px rgba(22,163,74,0.25) !important;
+          box-shadow: 0 0 0 2 rgba(22,163,74,0.25) !important;
           border-color: var(--primary-color) !important;
         }
 
@@ -69,13 +69,13 @@ def inject_theme_css():
         /* Small badges */
         .pill{
           display:inline-block;
-          padding: 4px 10px;
-          border-radius: 999px;
+          padding: 4 10;
+          border-radius: 999;
           font-size: 0.80rem;
           font-weight: 700;
-          border: 1px solid rgba(0,0,0,0.12);
+          border: 1 solid rgba(0,0,0,0.12);
           background: rgba(0,0,0,0.02);
-          margin: 6px 0 10px 0;
+          margin: 6 0 10 0;
         }
         .pill-ok{
           border-color: rgba(22,163,74,0.35);
@@ -90,49 +90,49 @@ def inject_theme_css():
 
         /* KPI cards */
         .kpi-card{
-          border: 1px solid rgba(49, 51, 63, 0.18);
-          border-radius: 12px;
-          padding: 12px 12px;
+          border: 1 solid rgba(49, 51, 63, 0.18);
+          border-radius: 12;
+          padding: 12 12;
           background: rgba(255,255,255,0.02);
-          margin-bottom: 10px;
+          margin-bottom: 10;
         }
         .kpi-title{
           font-weight: 800;
           font-size: 0.95rem;
-          margin-bottom: 2px;
+          margin-bottom: 2;
           line-height: 1.2;
         }
         .kpi-sub{
           font-weight: 600;
           opacity: 0.70;
           font-size: 0.82rem;
-          margin-bottom: 8px;
+          margin-bottom: 8;
         }
         .kpi-row{
           display:flex;
           justify-content: space-between;
-          gap: 12px;
-          padding: 2px 0;
+          gap: 12;
+          padding: 2 0;
           font-size: 0.92rem;
         }
         .kpi-label{ opacity: 0.75; }
         .kpi-val{ font-weight: 800; }
-        .kpi-note{ opacity: 0.70; font-size: 0.82rem; margin-top: 6px; }
+        .kpi-note{ opacity: 0.70; font-size: 0.82rem; margin-top: 6; }
 
         /* Section headings inside expanders */
         .sec-h{
           font-weight: 900;
           font-size: 1.05rem;
-          margin: 2px 0 8px 0;
+          margin: 2 0 8 0;
         }
 
         /* Make left side "action bar" look attached */
         .action-bar{
-          border: 1px solid rgba(49, 51, 63, 0.18);
-          border-radius: 12px;
-          padding: 12px;
+          border: 1 solid rgba(49, 51, 63, 0.18);
+          border-radius: 12;
+          padding: 12;
           background: rgba(255,255,255,0.02);
-          margin-top: 10px;
+          margin-top: 10;
         }
         </style>
         """,
@@ -1151,7 +1151,7 @@ def scenario_panel(prefix: str, title: str, completeness: dict):
                 st.number_input("Water heating COP", min_value=0.0, max_value=10.0, step=0.1, key=f"{prefix}_waterCOP_custom", help=HELP["cop"])
                 st.number_input("Water heating install capex (NZD)", min_value=0.0, max_value=50000.0, step=100.0, key=f"{prefix}_waterInstall_custom")
 
-            st.markdown('<div class="sec-h" style="margin-top:12px;">Water fixtures + appliances</div>', unsafe_allow_html=True)
+            st.markdown('<div class="sec-h" style="margin-top:12;">Water fixtures + appliances</div>', unsafe_allow_html=True)
 
             select_with_placeholder("Toilet type", TOILET_OPTS, key=f"{prefix}_toiletType", help_text=HELP["fixture"])
             show_fixture_caption("toilet", st.session_state[f"{prefix}_toiletType"])
@@ -1387,8 +1387,8 @@ tab_calc, tab_formulas, tab_sources = st.tabs(["Calculator", "Formulas", "Data s
 with tab_calc:
     left, right = st.columns([1, 1], gap="large")
 
-    INPUT_H = 860
-    RESULTS_H = 860
+    INPUT_H = 600
+    RESULTS_H = 800
 
     # -------------------------
     # LEFT: inputs (scroll box) + ACTION BAR (always visible below)
@@ -1434,9 +1434,6 @@ with tab_calc:
                     "Option",
                     completeness={"core": o_core_ok, "envsyswater": o_env_ok},
                 )
-
-        # Action bar (always visible; looks attached; no blue warning box)
-        st.markdown('<div class="action-bar">', unsafe_allow_html=True)
 
         # Baseline action
         if not st.session_state["baseline_ready"]:
