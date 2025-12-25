@@ -15,6 +15,9 @@ import streamlit.components.v1 as components
 st.set_page_config(page_title="NZ Housing Sustainability Calculator (Prototype)", layout="wide")
 PLACEHOLDER = "— Select —"
 
+# Single height constant so inputs + results always match (1080p-friendly)
+PANEL_H = 680
+
 # =============================================================================
 # HELPERS (DO NOT reference LOOKUP here)
 # =============================================================================
@@ -329,73 +332,26 @@ def build_help(LOOKUP):
 HELP = build_help(LOOKUP)
 
 # =============================================================================
-# DATA PROVENANCE TABLE
-# =============================================================================
-DATA_PROVENANCE_ROWS = [
-    (1, "Energy", "Total Energy", "Total annual household energy use", "Calculated",
-     "Space heating + water heating + lighting", "Derived", "Primary output"),
-    (2, "Energy", "Space Heating Energy", "Electricity for space heating", "Calculated",
-     "(H_total × HDD × 24 / 1000) ÷ COP", "MBIE (2023)", "Steady-state early-stage method"),
-    (3, "Energy", "Heating Degree Days (HDD)", "Climate severity (base 18 °C)", "Lookup / User",
-     "Zone 1=1200; Zone 2=1400; Zone 3=1800; Zone 4=2200; Zone 5=2400; Zone 6=3000; Custom",
-     "InfraComfort (n.d.); MSD (2006)", "City → climate zone"),
-    (4, "Energy", "Heating System COP", "Seasonal heating efficiency", "Assumption / User",
-     "None=0; Electric resistance=1.0; Heat pump=2.5; High-efficiency HP=3.5; Custom",
-     "BRANZ (2023)", "Typical NZ systems"),
-    (5, "Envelope", "Floor R-value", "Floor thermal resistance", "Assumption / User",
-     "Uninsulated=0.6; Basic=1.5; Code=2.0; Good=2.8; Excellent=3.5; Custom",
-     "MBIE (2023); BRANZ (2023)", "NZBC H1 aligned"),
-    (6, "Envelope", "Roof R-value", "Roof thermal resistance", "Assumption / User",
-     "Uninsulated=0.5; Basic=3.0; Code=6.6; Good=8.0; Excellent=10.0; Custom",
-     "MBIE (2023); BRANZ (2023)", "NZBC H1 aligned"),
-    (7, "Envelope", "Wall R-value", "Wall thermal resistance", "Assumption / User",
-     "Uninsulated=0.5; Basic=1.5; Code=2.0; Good=3.0; Excellent=4.0; Custom",
-     "MBIE (2023); BRANZ (2023)", "NZBC H1 aligned"),
-    (8, "Envelope", "Window U-value", "Glazing heat transfer", "Assumption / User",
-     "Single=5.8; Double=3.0; Low-E=2.0; Triple=1.0; Custom",
-     "BRANZ (2023)", "Typical NZ glazing"),
-    (9, "Envelope", "Envelope Areas", "Floor/roof/wall/window areas", "User Input",
-     "User input (m²)", "User-defined", "Simplified geometry"),
-    (10, "Water Heating", "Delivered Hot Water Energy", "Energy to heat water", "Calculated",
-     "(V × ΔT × Cp) ÷ 3600", "Engineering standard", "Physics-based"),
-    (11, "Water Heating", "Heat Capacity (Cp)", "Thermal constant", "Constant",
-     "4.186 kJ/kg°C", "Engineering standard", "Universal"),
-    (12, "Water Heating", "Hot Water Fraction – Shower", "Portion of shower water heated", "Assumption / User",
-     "Default=0.9; range 0–1", "BRANZ (2023)", "Overrideable"),
-    (13, "Water Heating", "Hot Water Fraction – Tap", "Portion of tap water heated", "Assumption / User",
-     "Default=0.4; range 0–1", "BRANZ (2023)", "Overrideable"),
-    (14, "Water Heating", "Hot Water Fraction – Laundry", "Portion of laundry water heated", "Assumption / User",
-     "Default=0.5; range 0–1", "BRANZ (2023)", "Overrideable"),
-    (15, "Water Heating", "Hot Water Fraction – Dishwasher", "Portion of dishwasher water heated", "Assumption / User",
-     "Default=1.0; range 0–1", "BRANZ (2023)", "Overrideable"),
-    (16, "Water Heating", "Water Heating COP", "Hot water system efficiency", "Assumption / User",
-     "None=0; Electric cylinder=1.0; HPHW=2.0; Custom", "BRANZ (2023)", "Simplified"),
-    (17, "Lighting", "Lighting Energy", "Annual lighting electricity", "Calculated",
-     "(Lights × W × h × 365) ÷ 1000", "Derived", "Standard load"),
-    (18, "Water", "Total Water Use", "Annual indoor water use", "Calculated",
-     "Sum of end uses", "Derived", "m³/year"),
-    (19, "Carbon", "Grid Emission Factor", "Carbon per kWh electricity", "Constant",
-     "0.0729 kgCO₂e/kWh (default)", "MfE (2024)", "2023 value"),
-    (20, "Carbon", "Water Emission Factor", "Carbon per m³ water", "Constant",
-     "0.0349 kgCO₂e/m³ (default)", "MfE (2024)", ""),
-    (21, "Cost (Opex)", "Electricity Tariff", "Retail electricity price", "Default / User",
-     "Default=0.312 NZD/kWh (editable)", "Electricity Authority (2024)", ""),
-    (22, "Cost (Opex)", "Water Tariff", "Residential water price", "Default / User",
-     "Default=2.296 NZD/m³ (editable)", "Auckland Council (2025)", ""),
-]
-
-# =============================================================================
 # UTIL
 # =============================================================================
-def fmt_num(x: float | None, decimals: int = 1) -> str:
+def fmt_num(x: float, decimals: int = 1):
     if x is None:
         return "—"
     return f"{x:,.{decimals}f}"
 
-def fmt_money(x: float | None, decimals: int = 0) -> str:
+def fmt_money(x: float, decimals: int = 0) -> str:
     if x is None:
         return "—"
     return f"${x:,.{decimals}f}"
+
+def direction_arrow(delta: float) -> str:
+    if delta is None:
+        return "—"
+    if delta < 0:
+        return "▼"
+    if delta > 0:
+        return "▲"
+    return "—"
 
 def _yn_to_bool(v: str):
     if v == "Yes":
@@ -418,6 +374,85 @@ def select_with_placeholder(label: str, options: list, key: str, help_text: str 
     current = st.session_state.get(key, PLACEHOLDER)
     idx = full.index(current) if current in full else 0
     return st.selectbox(label, full, index=idx, key=key, help=help_text)
+
+# =============================================================================
+# HTML/CARDS
+# =============================================================================
+def inject_card_css():
+    if st.session_state.get("_card_css_injected", False):
+        return
+    st.markdown(
+        """
+        <style>
+        .kpi-board-title{
+          font-weight: 800;
+          font-size: 1.05rem;
+          margin: 4px 0 10px 0;
+        }
+        .kpi-grid-2{
+          display:grid;
+          grid-template-columns: 1fr 1fr;
+          gap: 10px;
+        }
+        .kpi-card{
+          border: 1px solid rgba(49, 51, 63, 0.20);
+          border-radius: 12px;
+          padding: 12px 12px;
+          background: rgba(255,255,255,0.02);
+        }
+        .kpi-title{
+          font-weight: 800;
+          font-size: 0.95rem;
+          margin-bottom: 8px;
+        }
+        .kpi-sub{
+          font-weight: 600;
+          opacity: 0.70;
+          font-size: 0.82rem;
+          margin-top: -2px;
+          margin-bottom: 8px;
+        }
+        .kpi-row{
+          display:flex;
+          justify-content: space-between;
+          gap: 12px;
+          padding: 2px 0;
+          font-size: 0.9rem;
+        }
+        .kpi-label{ opacity: 0.75; }
+        .kpi-val{ font-weight: 800; }
+        .kpi-note{ opacity: 0.70; font-size: 0.82rem; margin-top: 6px; }
+        </style>
+        """,
+        unsafe_allow_html=True
+    )
+    st.session_state["_card_css_injected"] = True
+
+def render_metric_card(title: str, unit: str, b_val: str, o_val: str, d_val: str, d_dir: str):
+    inject_card_css()
+    html = f"""
+    <div class="kpi-card">
+      <div class="kpi-title">{title}</div>
+      <div class="kpi-sub">{unit}</div>
+      <div class="kpi-row"><div class="kpi-label">Baseline</div><div class="kpi-val">{b_val}</div></div>
+      <div class="kpi-row"><div class="kpi-label">Option</div><div class="kpi-val">{o_val}</div></div>
+      <div class="kpi-row"><div class="kpi-label">Δ (Option − Base)</div><div class="kpi-val">{d_dir} {d_val}</div></div>
+    </div>
+    """
+    st.markdown(html, unsafe_allow_html=True)
+
+def render_payback_card(pb_years: str, note: str):
+    inject_card_css()
+    note_html = f'<div class="kpi-note">{note}</div>' if note else ""
+    html = f"""
+    <div class="kpi-card">
+      <div class="kpi-title">Simple payback</div>
+      <div class="kpi-sub">years</div>
+      <div class="kpi-row"><div class="kpi-label">Payback</div><div class="kpi-val">{pb_years}</div></div>
+      {note_html}
+    </div>
+    """
+    st.markdown(html, unsafe_allow_html=True)
 
 # =============================================================================
 # RESOLVERS
@@ -616,6 +651,17 @@ def compute_capex_total(s: dict) -> dict:
     return {
         "capex_total_nzd": total,
         "breakdown_nzd": {"Envelope": envelope, "Systems": systems, "Fixtures": fixtures},
+        "detail_breakdown_nzd": {
+            "Roof insulation": cap["roof_nzd_per_m2"] * areas["roof"],
+            "Wall insulation": cap["wall_nzd_per_m2"] * areas["wall"],
+            "Floor insulation": cap["floor_nzd_per_m2"] * areas["floor"],
+            "Windows": cap["window_nzd_per_m2_window"] * areas["window"],
+            "Space heating system": cap["space_heating_install_nzd"],
+            "Water heating system": cap["water_heating_install_nzd"],
+            "Toilet install": cap["toilet_install_nzd"],
+            "Shower install": cap["shower_install_nzd"],
+            "Tap install": cap["tap_install_nzd"],
+        }
     }
 
 def calculate_scenario(s: dict, coeffs: dict) -> dict:
@@ -627,14 +673,20 @@ def calculate_scenario(s: dict, coeffs: dict) -> dict:
     total_electricity_kwh_y = space["Q_purchased_kwh_y"] + water_heat["Q_purchased_kwh_y"] + lighting["Q_total_kwh_y"]
     carbon = calculate_operational_carbon(total_electricity_kwh_y, water_use["V_total_m3_y"], coeffs)
     opex = calculate_opex(total_electricity_kwh_y, water_use["V_total_m3_y"], coeffs)
+    energy_intensity = (total_electricity_kwh_y / s["floorArea"]) if s["floorArea"] > 0 else 0.0
+
     capex = compute_capex_total(s)
 
     return {
+        "spaceHeating": space,
+        "waterConsumption": water_use,
+        "waterHeating": water_heat,
+        "lighting": lighting,
         "totalElectricity_kwh_y": total_electricity_kwh_y,
-        "waterConsumption_m3_y": water_use["V_total_m3_y"],
-        "carbon_kgco2e_y": carbon["CO2_total_kg_y"],
-        "opex_nzd_y": opex["opex_total_nzd_y"],
-        "capex_nzd": capex["capex_total_nzd"],
+        "energyIntensity_kwh_m2_y": energy_intensity,
+        "carbon": carbon,
+        "opex": opex,
+        "capex": capex,
     }
 
 # =============================================================================
@@ -696,7 +748,6 @@ def init_defaults():
         st.session_state.setdefault(f"{p}_use_custom_hdd", False)
         st.session_state.setdefault(f"{p}_hdd_override_value", 2000.0)
 
-        # custom performance + costs
         st.session_state.setdefault(f"{p}_roofR_custom", 6.6)
         st.session_state.setdefault(f"{p}_roofCost_custom", 25.0)
         st.session_state.setdefault(f"{p}_wallR_custom", 2.0)
@@ -733,7 +784,6 @@ def init_defaults():
         st.session_state.setdefault(f"{p}_hw_frac_laundry", float(hw["laundry"]))
         st.session_state.setdefault(f"{p}_hw_frac_dishwasher", float(hw["dishwasher"]))
 
-    # categorical defaults (start unselected)
     cat_keys = [
         "roofRLabel", "wallRLabel", "floorRLabel", "windowULabel",
         "spaceHeatingSystem", "waterHeatingSystem",
@@ -752,46 +802,24 @@ def seed_option_from_baseline_once():
     st.session_state["option_seeded"] = True
 
 def reset_scenario(prefix: str):
-    # keep it simple: reset readiness if baseline reset
-    if prefix == "b":
-        st.session_state["baseline_ready"] = False
-        st.session_state["compare_ready"] = False
-        st.session_state["option_unlocked"] = False
-        st.session_state["option_seeded"] = False
-        st.session_state["baseline_results"] = None
-        st.session_state["option_results"] = None
+    # simpler: reset by clearing ready flags and re-init defaults for that prefix
+    # (keeps other scenario intact)
+    keep = {}
+    for k, v in st.session_state.items():
+        keep[k] = v
 
-    st.session_state[f"{prefix}_coef_grid_ef"] = float(LOOKUP["constants"]["grid_emission_factor_kgco2e_per_kwh"])
-    st.session_state[f"{prefix}_coef_water_ef"] = float(LOOKUP["constants"]["water_emission_factor_kgco2e_per_m3"])
-    st.session_state[f"{prefix}_coef_elec_tariff"] = float(LOOKUP["constants"]["electricity_tariff_nzd_per_kwh_default"])
-    st.session_state[f"{prefix}_coef_water_tariff"] = float(LOOKUP["constants"]["water_tariff_nzd_per_m3_default"])
+    # brute reset only that prefix keys we know
+    keys_to_clear = [k for k in list(st.session_state.keys()) if k.startswith(prefix + "_")]
+    for k in keys_to_clear:
+        del st.session_state[k]
 
-    st.session_state[f"{prefix}_floorArea"] = float(LOOKUP["defaults"]["core"]["floorArea"])
-    st.session_state[f"{prefix}_ceilingHeight"] = float(LOOKUP["defaults"]["core"]["ceilingHeight"])
-    st.session_state[f"{prefix}_householdSize"] = int(LOOKUP["defaults"]["core"]["householdSize"])
-    st.session_state[f"{prefix}_windowArea"] = float(LOOKUP["defaults"]["core"]["windowArea"])
+    # re-set the defaults for that prefix
+    init_defaults()
 
-    st.session_state[f"{prefix}_light_n"] = int(LOOKUP["defaults"]["lighting"]["numberOfLights"])
-    st.session_state[f"{prefix}_light_watts"] = float(LOOKUP["defaults"]["lighting"]["wattsPerLight"])
-    st.session_state[f"{prefix}_light_hours"] = float(LOOKUP["defaults"]["lighting"]["hoursPerDay"])
-
-    st.session_state[f"{prefix}_wash_has"] = "No"
-    st.session_state[f"{prefix}_wash_cycles"] = float(LOOKUP["defaults"]["washing_machine"]["cyclesPerWeek"])
-    st.session_state[f"{prefix}_wash_L"] = float(LOOKUP["defaults"]["washing_machine"]["waterPerCycle_L"])
-    st.session_state[f"{prefix}_dish_has"] = "No"
-    st.session_state[f"{prefix}_dish_cycles"] = float(LOOKUP["defaults"]["dishwasher"]["cyclesPerWeek"])
-    st.session_state[f"{prefix}_dish_L"] = float(LOOKUP["defaults"]["dishwasher"]["waterPerCycle_L"])
-
-    st.session_state[f"{prefix}_closestCity"] = PLACEHOLDER
-    st.session_state[f"{prefix}_use_custom_hdd"] = False
-    st.session_state[f"{prefix}_hdd_override_value"] = 2000.0
-
-    for k in [
-        "roofRLabel", "wallRLabel", "floorRLabel", "windowULabel",
-        "spaceHeatingSystem", "waterHeatingSystem",
-        "toiletType", "showerType", "tapType",
-    ]:
-        st.session_state[f"{prefix}_{k}"] = PLACEHOLDER
+    # restore non-prefix keys
+    for k, v in keep.items():
+        if not k.startswith(prefix + "_"):
+            st.session_state[k] = v
 
 def apply_code_minimum(prefix: str):
     st.session_state[f"{prefix}_roofRLabel"] = "Code minimum"
@@ -949,7 +977,7 @@ def validate_scenario(s: dict) -> list:
     return missing
 
 # =============================================================================
-# UI captions (performance + capex)
+# UI CAPTIONS (performance + capex)
 # =============================================================================
 def show_city_caption(prefix: str):
     city = st.session_state.get(f"{prefix}_closestCity", PLACEHOLDER)
@@ -961,7 +989,7 @@ def show_city_caption(prefix: str):
         st.caption(f"Climate zone: **{z}** · Default HDD (base 18°C): **{hdd:g}**")
 
 def show_envelope_caption(element: str, label: str):
-    if label in (PLACEHOLDER, None, "Custom"):
+    if label in (PLACEHOLDER, None) or label == "Custom":
         return
     if element in ("roof", "wall", "floor"):
         r = LOOKUP["thermal_envelope"][f"{element}R_m2K_per_W"][label]
@@ -974,14 +1002,14 @@ def show_envelope_caption(element: str, label: str):
         st.caption(f"Performance: **U={u:g} W/m²K** · Capex: **{fmt_money(cost)} /m² window**")
 
 def show_system_caption(sys_block: str, label: str):
-    if label in (PLACEHOLDER, None, "Custom"):
+    if label in (PLACEHOLDER, None) or label == "Custom":
         return
     cop = LOOKUP["systems"][sys_block]["cop"][label]
     cost = LOOKUP["systems"][sys_block]["install_cost_nzd"][label]
     st.caption(f"Performance: **COP={cop:g}** · Install capex: **{fmt_money(cost)}**")
 
 def show_fixture_caption(kind: str, label: str):
-    if label in (PLACEHOLDER, None, "Custom"):
+    if label in (PLACEHOLDER, None) or label == "Custom":
         return
     if kind == "toilet":
         v = LOOKUP["fixtures"]["toilet"]["l_per_flush"][label]
@@ -995,8 +1023,8 @@ def show_fixture_caption(kind: str, label: str):
 # =============================================================================
 # INPUT PANELS
 # =============================================================================
-def scenario_panel(prefix: str, title: str, CITIES, ROOF_OPTS, WALL_OPTS, FLOOR_OPTS, WIN_OPTS, SPACE_SYS_OPTS, WATER_SYS_OPTS, TOILET_OPTS, SHOWER_OPTS, TAP_OPTS):
-    st.markdown(f"### {title}")
+def scenario_panel(prefix: str, title: str):
+    st.subheader(title)
 
     c1, c2 = st.columns([1, 1], gap="small")
     with c1:
@@ -1013,14 +1041,21 @@ def scenario_panel(prefix: str, title: str, CITIES, ROOF_OPTS, WALL_OPTS, FLOOR_
         cc1, cc2 = st.columns(2, gap="small")
 
         with cc1:
-            select_with_placeholder("Closest city", CITIES, key=f"{prefix}_closestCity", help_text=HELP["closest_city"])
+            select_with_placeholder(
+                "Closest city",
+                CITIES,
+                key=f"{prefix}_closestCity",
+                help_text=HELP["closest_city"],
+            )
             show_city_caption(prefix)
 
             st.checkbox("Use custom HDD", key=f"{prefix}_use_custom_hdd", help=HELP["use_custom_hdd"])
             if st.session_state[f"{prefix}_use_custom_hdd"]:
                 st.number_input(
-                    "Custom HDD (base 18°C)", min_value=0.0, max_value=6000.0, step=50.0,
-                    key=f"{prefix}_hdd_override_value", help=HELP["hdd_value"]
+                    "Custom HDD (base 18°C)",
+                    min_value=0.0, max_value=6000.0, step=50.0,
+                    key=f"{prefix}_hdd_override_value",
+                    help=HELP["hdd_value"],
                 )
 
             st.number_input("Floor area (m²)", min_value=20.0, max_value=500.0, step=5.0, key=f"{prefix}_floorArea", help=HELP["floor_area"])
@@ -1109,7 +1144,7 @@ def scenario_panel(prefix: str, title: str, CITIES, ROOF_OPTS, WALL_OPTS, FLOOR_
                     st.number_input("Cycles/week (dishwasher)", min_value=0.0, max_value=50.0, step=1.0, key=f"{prefix}_dish_cycles")
                     st.number_input("L/cycle (dishwasher)", min_value=0.0, max_value=100.0, step=1.0, key=f"{prefix}_dish_L")
 
-    # 3) Optional assumptions
+    # 3) Optional
     with st.expander("Optional: usage + fractions + tariffs + emissions", expanded=False):
         st.caption("Use this section only if you want to tailor behaviour assumptions or local pricing/factors.")
         oc1, oc2 = st.columns(2, gap="small")
@@ -1136,133 +1171,6 @@ def scenario_panel(prefix: str, title: str, CITIES, ROOF_OPTS, WALL_OPTS, FLOOR_
                 st.number_input("Water tariff (NZD/m³)", min_value=0.0, max_value=20.0, step=0.1, key=f"{prefix}_coef_water_tariff", help=HELP["tariffs"])
                 st.number_input("Grid emission factor (kgCO₂e/kWh)", min_value=0.0, max_value=1.0, step=0.0001, key=f"{prefix}_coef_grid_ef", help=HELP["efs"])
                 st.number_input("Water emission factor (kgCO₂e/m³)", min_value=0.0, max_value=5.0, step=0.0001, key=f"{prefix}_coef_water_ef", help=HELP["efs"])
-
-# =============================================================================
-# RESULTS CARDS
-# =============================================================================
-st.markdown(
-    """
-<style>
-.kpi-card {
-  border: 1px solid rgba(49, 51, 63, 0.2);
-  border-radius: 10px;
-  padding: 12px 14px;
-  margin-bottom: 10px;
-}
-.kpi-title {
-  font-weight: 700;
-  font-size: 14px;
-  margin-bottom: 2px;
-}
-.kpi-unit {
-  color: rgba(49, 51, 63, 0.7);
-  font-size: 12px;
-  margin-bottom: 10px;
-}
-.kpi-grid {
-  display: grid;
-  grid-template-columns: 1fr;
-  gap: 6px;
-  font-size: 13px;
-}
-.kpi-row {
-  display: flex;
-  justify-content: space-between;
-  gap: 10px;
-}
-.kpi-label {
-  color: rgba(49, 51, 63, 0.75);
-}
-.kpi-val {
-  font-weight: 650;
-}
-</style>
-""",
-    unsafe_allow_html=True,
-)
-
-def _card_html(title: str, unit: str, base: str, opt: str, delta: str, payback_only: bool = False):
-    if payback_only:
-        rows = f"""
-        <div class="kpi-grid">
-          <div class="kpi-row"><div class="kpi-label">Simple payback</div><div class="kpi-val">{delta}</div></div>
-          <div class="kpi-row"><div class="kpi-label">Formula</div><div class="kpi-val">(ΔCapex) ÷ (−ΔOpex)</div></div>
-        </div>
-        """
-    else:
-        rows = f"""
-        <div class="kpi-grid">
-          <div class="kpi-row"><div class="kpi-label">Baseline</div><div class="kpi-val">{base}</div></div>
-          <div class="kpi-row"><div class="kpi-label">Option</div><div class="kpi-val">{opt}</div></div>
-          <div class="kpi-row"><div class="kpi-label">Δ (Option − Base)</div><div class="kpi-val">{delta}</div></div>
-        </div>
-        """
-
-    return f"""
-    <div class="kpi-card">
-      <div class="kpi-title">{title}</div>
-      <div class="kpi-unit">{unit}</div>
-      {rows}
-    </div>
-    """
-
-def render_kpi_cards(b_res: dict | None, o_res: dict | None):
-    # metrics: 3 rows x 2 cols
-    metrics = [
-        ("Total energy use", "kWh/year", "totalElectricity_kwh_y", 1, "num"),
-        ("Total water use", "m³/year", "waterConsumption_m3_y", 2, "num"),
-        ("Operational carbon", "kgCO₂e/year", "carbon_kgco2e_y", 1, "num"),
-        ("Operational expenditure", "NZD/year", "opex_nzd_y", 0, "money"),
-        ("Capital expenditure", "NZD (one-off)", "capex_nzd", 0, "money"),
-        ("Simple payback years", "years", "payback", 1, "payback"),
-    ]
-
-    def fmt_val(v, dec, mode):
-        if v is None:
-            return "—"
-        if mode == "money":
-            return fmt_money(float(v), dec)
-        return fmt_num(float(v), dec)
-
-    # compute payback based on b/o capex + opex
-    pb = None
-    if b_res is not None and o_res is not None:
-        inc_capex = float(o_res["capex_nzd"]) - float(b_res["capex_nzd"])
-        savings = float(b_res["opex_nzd_y"]) - float(o_res["opex_nzd_y"])
-        if inc_capex <= 0:
-            pb = 0.0
-        elif savings <= 0:
-            pb = None
-        else:
-            pb = inc_capex / savings
-
-    # render 6 cards in 3 rows x 2 cols
-    for r in range(3):
-        cols = st.columns(2, gap="small")
-        for c in range(2):
-            i = r * 2 + c
-            title, unit, key, dec, mode = metrics[i]
-
-            if mode == "payback":
-                pb_txt = fmt_num(pb, dec) if pb is not None else "—"
-                html = _card_html(title, unit, "—", "—", pb_txt, payback_only=True)
-                cols[c].markdown(html, unsafe_allow_html=True)
-                continue
-
-            b_v = float(b_res[key]) if b_res is not None else None
-            o_v = float(o_res[key]) if o_res is not None else None
-            d_v = (o_v - b_v) if (o_v is not None and b_v is not None) else None
-
-            base_txt = fmt_val(b_v, dec, "money" if mode == "money" else "num")
-            opt_txt = fmt_val(o_v, dec, "money" if mode == "money" else "num")
-
-            if mode == "money":
-                delta_txt = fmt_money(d_v, dec) if d_v is not None else "—"
-            else:
-                delta_txt = fmt_num(d_v, dec) if d_v is not None else "—"
-
-            html = _card_html(title, unit, base_txt, opt_txt, delta_txt, payback_only=False)
-            cols[c].markdown(html, unsafe_allow_html=True)
 
 # =============================================================================
 # FORMULAS TAB CONTENT
@@ -1323,27 +1231,22 @@ def render_formulas_tab():
     )
 
 # =============================================================================
-# DATA SOURCES TAB
+# DATA SOURCES TAB (kept simple placeholder)
 # =============================================================================
 def render_data_sources_tab():
-    st.header("Data sources (full table)")
-    df = pd.DataFrame(
-        DATA_PROVENANCE_ROWS,
-        columns=[
-            "Order", "Module", "Variable / Indicator", "Description & Role in Model",
-            "Data Type", "Selection Options & Default Values", "Source / Reference", "Notes"
-        ]
-    )
-    st.dataframe(df, hide_index=True, use_container_width=True)
+    st.header("Data sources")
+    st.info("Data sources table is currently not shown in this build. (You can paste your provenance table back here when needed.)")
 
 # =============================================================================
 # APP START
 # =============================================================================
 init_defaults()
 
+# Option auto-seed (only once) after baseline is locked
 if st.session_state.get("baseline_ready", False) and st.session_state.get("option_unlocked", False) and not st.session_state.get("option_seeded", False):
     seed_option_from_baseline_once()
 
+# Options lists (must exist before scenario_panel runs)
 CITIES = sorted(list(LOOKUP["climate"]["zone_by_city"].keys()))
 ROOF_OPTS = list(LOOKUP["thermal_envelope"]["roofR_m2K_per_W"].keys()) + ["Custom"]
 WALL_OPTS = list(LOOKUP["thermal_envelope"]["wallR_m2K_per_W"].keys()) + ["Custom"]
@@ -1358,7 +1261,7 @@ SHOWER_OPTS = list(LOOKUP["fixtures"]["shower"]["l_per_min"].keys()) + ["Custom"
 TAP_OPTS = list(LOOKUP["fixtures"]["tap"]["l_per_min"].keys()) + ["Custom"]
 
 st.title("NZ Housing Sustainability Calculator (Prototype)")
-st.caption("Baseline → Calculate → unlock Option → Calculate & Compare. Inputs and Results are scroll-contained for a 16:9 1080p workflow.")
+st.caption("Early-stage comparison tool. Baseline → unlock Option → Compare. After activation, results update automatically as you edit inputs.")
 
 tab_calc, tab_formulas, tab_sources = st.tabs(["Calculator", "Formulas", "Data sources"])
 
@@ -1366,64 +1269,36 @@ tab_calc, tab_formulas, tab_sources = st.tabs(["Calculator", "Formulas", "Data s
 # TAB 1: CALCULATOR
 # =============================================================================
 with tab_calc:
-    left, right = st.columns([1.55, 1.0], gap="large")
+    left, right = st.columns([1.45, 1.0], gap="large")
 
-    # ---- LEFT: scroll-contained inputs (baseline + option)
+    # LEFT: one single scrollable box containing Baseline + Option (once unlocked)
     with left:
-        # tuned for 1080p-ish: keep this shorter so results remain visible
-        INPUT_BOX_H = 680
-
         try:
-            baseline_box = st.container(height=INPUT_BOX_H, border=True)
+            inputs_box = st.container(height=PANEL_H, border=True)
         except TypeError:
-            baseline_box = st.container()
+            inputs_box = st.container()
 
-        with baseline_box:
-            scenario_panel(
-                "b", "Baseline",
-                CITIES, ROOF_OPTS, WALL_OPTS, FLOOR_OPTS, WIN_OPTS,
-                SPACE_SYS_OPTS, WATER_SYS_OPTS, TOILET_OPTS, SHOWER_OPTS, TAP_OPTS
-            )
-
+        with inputs_box:
+            # Baseline
+            scenario_panel("b", "Baseline")
             b_now = get_scenario("b")
             missing_b = validate_scenario(b_now)
 
             st.divider()
-            if not st.session_state["baseline_ready"]:
+            if not st.session_state.get("baseline_ready", False):
                 if missing_b:
                     st.info("Baseline incomplete. Missing: " + ", ".join(missing_b))
                 if st.button("Calculate Baseline", use_container_width=True, disabled=bool(missing_b)):
-                    try:
-                        b_now = get_scenario("b")
-                        missing_b = validate_scenario(b_now)
-                        if missing_b:
-                            st.warning("Baseline incomplete. Missing: " + ", ".join(missing_b))
-                        else:
-                            b_res = calculate_scenario(b_now, get_coeffs("b"))
-                            st.session_state["baseline_results"] = b_res
-                            st.session_state["baseline_ready"] = True
-                            st.session_state["option_unlocked"] = True
-                            if not st.session_state.get("option_seeded", False):
-                                seed_option_from_baseline_once()
-                            st.rerun()
-                    except Exception as e:
-                        st.error("Baseline calculation failed.")
-                        st.exception(e)
+                    st.session_state["baseline_ready"] = True
+                    st.session_state["option_unlocked"] = True
+                    if not st.session_state.get("option_seeded", False):
+                        seed_option_from_baseline_once()
+                    st.rerun()
 
-        if st.session_state.get("option_unlocked", False):
-            st.write("")  # small spacer
-
-            try:
-                option_box = st.container(height=INPUT_BOX_H, border=True)
-            except TypeError:
-                option_box = st.container()
-
-            with option_box:
-                scenario_panel(
-                    "o", "Option",
-                    CITIES, ROOF_OPTS, WALL_OPTS, FLOOR_OPTS, WIN_OPTS,
-                    SPACE_SYS_OPTS, WATER_SYS_OPTS, TOILET_OPTS, SHOWER_OPTS, TAP_OPTS
-                )
+            # Option (same scroll box)
+            if st.session_state.get("option_unlocked", False):
+                st.divider()
+                scenario_panel("o", "Option")
 
                 o_now = get_scenario("o")
                 missing_o = validate_scenario(o_now)
@@ -1433,87 +1308,135 @@ with tab_calc:
                     if missing_o:
                         st.info("Option incomplete. Missing: " + ", ".join(missing_o))
                     if st.button("Calculate & Compare", use_container_width=True, disabled=bool(missing_o)):
-                        try:
-                            o_now = get_scenario("o")
-                            missing_o = validate_scenario(o_now)
-                            if missing_o:
-                                st.warning("Option incomplete. Missing: " + ", ".join(missing_o))
-                            else:
-                                o_res = calculate_scenario(o_now, get_coeffs("o"))
-                                st.session_state["option_results"] = o_res
-                                st.session_state["compare_ready"] = True
-                                st.rerun()
-                        except Exception as e:
-                            st.error("Option calculation failed.")
-                            st.exception(e)
+                        st.session_state["compare_ready"] = True
+                        st.rerun()
 
-    # ---- RIGHT: results in one scroll container; title INSIDE box; cards layout 3x2
+    # RIGHT: results box with title inside + 3x2 cards
     with right:
-        # shorter so it fits 1080p (and still allows scrolling for details)
-        RESULTS_BOX_H = 680
-
         try:
-            results_box = st.container(height=RESULTS_BOX_H, border=True)
+            results_box = st.container(height=PANEL_H, border=True)
         except TypeError:
             results_box = st.container()
 
         with results_box:
-            st.markdown("### Results")
-
-            b_res = st.session_state.get("baseline_results", None)
-            o_res = st.session_state.get("option_results", None)
-
-            # Live update baseline after first calc (optional but matches your “changes take effect” behavior)
-            try:
-                if st.session_state.get("baseline_ready", False):
-                    b_now_live = get_scenario("b")
-                    if not validate_scenario(b_now_live):
-                        b_res = calculate_scenario(b_now_live, get_coeffs("b"))
-                        st.session_state["baseline_results"] = b_res
-
-                # Live update option after compare ready
-                if st.session_state.get("compare_ready", False):
-                    o_now_live = get_scenario("o")
-                    if not validate_scenario(o_now_live):
-                        o_res = calculate_scenario(o_now_live, get_coeffs("o"))
-                        st.session_state["option_results"] = o_res
-
-            except Exception as e:
-                st.error("Results rendering failed.")
-                st.exception(e)
+            st.markdown('<div class="kpi-board-title">Results</div>', unsafe_allow_html=True)
 
             if not st.session_state.get("baseline_ready", False):
-                st.info("Fill Baseline inputs and click **Calculate Baseline** to show the Baseline cards.")
+                st.info("Fill Baseline inputs and click **Calculate Baseline**.")
             else:
-                # After baseline calc: show same card set, but Option/Delta will be blank until compare_ready
-                if not st.session_state.get("compare_ready", False):
-                    st.caption("Baseline calculated. Option is unlocked. When you click **Calculate & Compare**, the same cards will populate Option + Δ.")
-                render_kpi_cards(b_res, o_res)
+                b_now = get_scenario("b")
+                missing_b = validate_scenario(b_now)
+                if missing_b:
+                    st.warning("Baseline incomplete. Missing: " + ", ".join(missing_b))
+                else:
+                    b_res = calculate_scenario(b_now, get_coeffs("b"))
+                    st.session_state["baseline_results"] = b_res
 
-            st.divider()
+                    # Option results (only after compare is enabled + valid)
+                    o_res = None
+                    if st.session_state.get("compare_ready", False):
+                        o_now = get_scenario("o")
+                        missing_o = validate_scenario(o_now)
+                        if not missing_o:
+                            o_res = calculate_scenario(o_now, get_coeffs("o"))
+                            st.session_state["option_results"] = o_res
+                        else:
+                            st.warning("Option incomplete. Missing: " + ", ".join(missing_o))
 
-            # Export still available (optional)
-            if st.session_state.get("baseline_ready", False) and b_res is not None:
-                payload = {
-                    "timestamp": datetime.utcnow().isoformat() + "Z",
-                    "baseline": {"coefficients": get_coeffs("b"), "results": b_res},
-                    "option": {"coefficients": get_coeffs("o"), "results": o_res} if o_res is not None else None,
-                    "notes": {
-                        "scope": "Early-stage decision support; not certification; not simulation.",
-                        "energy_boundary": "Space heating + water heating + lighting (excludes plug loads/appliances).",
-                        "water_boundary": "Indoor water includes toilets, showers, taps, plus dishwasher/washing machine water.",
-                        "capex_boundary": "Transparent unit-cost accounting. Not investment-grade.",
-                        "hot_water_model": "Hot water derived from end-use volumes using hot water fractions (toilet excluded).",
-                    },
-                }
+                    def metric_vals(b_value: float, o_value: float | None, dec: int):
+                        b_s = fmt_num(b_value, dec)
+                        if o_value is None:
+                            return b_s, "—", "—", "—"
+                        d = o_value - b_value
+                        return b_s, fmt_num(o_value, dec), fmt_num(d, dec), direction_arrow(d)
 
-                st.download_button(
-                    "Download results (JSON)",
-                    data=json.dumps(payload, indent=2),
-                    file_name=f"housing-sustainability-comparison-{int(datetime.utcnow().timestamp())}.json",
-                    mime="application/json",
-                    use_container_width=True,
-                )
+                    # Compute payback once both scenarios exist
+                    pb_years = "—"
+                    pb_note = ""
+                    if o_res is not None:
+                        inc_capex = o_res["capex"]["capex_total_nzd"] - b_res["capex"]["capex_total_nzd"]
+                        savings = b_res["opex"]["opex_total_nzd_y"] - o_res["opex"]["opex_total_nzd_y"]
+                        if inc_capex <= 0:
+                            pb_years = fmt_num(0.0, 1)
+                            pb_note = "No additional capex (option ≤ baseline capex)."
+                        elif savings <= 0:
+                            pb_years = "—"
+                            pb_note = "No payback (opex savings ≤ 0)."
+                        else:
+                            pb_years = fmt_num(inc_capex / savings, 1)
+
+                    # 3 rows x 2 columns of cards
+                    inject_card_css()
+                    st.markdown('<div class="kpi-grid-2">', unsafe_allow_html=True)
+
+                    # 1) Total energy
+                    b_s, o_s, d_s, d_dir = metric_vals(
+                        b_res["totalElectricity_kwh_y"],
+                        (o_res["totalElectricity_kwh_y"] if o_res else None),
+                        1
+                    )
+                    render_metric_card("Total energy use", "kWh/year", b_s, o_s, d_s, d_dir)
+
+                    # 2) Total water
+                    b_s, o_s, d_s, d_dir = metric_vals(
+                        b_res["waterConsumption"]["V_total_m3_y"],
+                        (o_res["waterConsumption"]["V_total_m3_y"] if o_res else None),
+                        2
+                    )
+                    render_metric_card("Total water use", "m³/year", b_s, o_s, d_s, d_dir)
+
+                    # 3) Operational carbon
+                    b_s, o_s, d_s, d_dir = metric_vals(
+                        b_res["carbon"]["CO2_total_kg_y"],
+                        (o_res["carbon"]["CO2_total_kg_y"] if o_res else None),
+                        1
+                    )
+                    render_metric_card("Operational carbon", "kgCO₂e/year", b_s, o_s, d_s, d_dir)
+
+                    # 4) Operational expenditure
+                    b_s, o_s, d_s, d_dir = metric_vals(
+                        b_res["opex"]["opex_total_nzd_y"],
+                        (o_res["opex"]["opex_total_nzd_y"] if o_res else None),
+                        0
+                    )
+                    render_metric_card("Operational expenditure", "NZD/year", b_s, o_s, d_s, d_dir)
+
+                    # 5) Capital expenditure
+                    b_s, o_s, d_s, d_dir = metric_vals(
+                        b_res["capex"]["capex_total_nzd"],
+                        (o_res["capex"]["capex_total_nzd"] if o_res else None),
+                        0
+                    )
+                    render_metric_card("Capital expenditure", "NZD", b_s, o_s, d_s, d_dir)
+
+                    # 6) Payback
+                    render_payback_card(pb_years, pb_note)
+
+                    st.markdown("</div>", unsafe_allow_html=True)
+
+                    st.divider()
+
+                    # Export JSON (only when compare exists, but baseline export is still ok)
+                    payload = {
+                        "timestamp": datetime.utcnow().isoformat() + "Z",
+                        "baseline": {"coefficients": get_coeffs("b"), "inputs": b_now, "results": b_res},
+                        "option": {"coefficients": (get_coeffs("o") if o_res else None), "inputs": (get_scenario("o") if st.session_state.get("option_unlocked", False) else None), "results": o_res},
+                        "notes": {
+                            "scope": "Early-stage decision support; not certification; not simulation.",
+                            "energy_boundary": "Space heating + water heating + lighting (excludes plug loads/appliances).",
+                            "water_boundary": "Indoor water includes toilets, showers, taps, plus dishwasher/washing machine water.",
+                            "capex_boundary": "Transparent unit-cost accounting. Not investment-grade.",
+                            "hot_water_model": "Hot water derived from end-use volumes using hot water fractions (toilet excluded).",
+                        },
+                    }
+
+                    st.download_button(
+                        "Download results (JSON)",
+                        data=json.dumps(payload, indent=2),
+                        file_name=f"housing-sustainability-results-{int(datetime.utcnow().timestamp())}.json",
+                        mime="application/json",
+                        use_container_width=True,
+                    )
 
 # =============================================================================
 # TAB 2: FORMULAS
@@ -1522,7 +1445,7 @@ with tab_formulas:
     render_formulas_tab()
 
 # =============================================================================
-# TAB 3: DATA SOURCES FULL
+# TAB 3: DATA SOURCES
 # =============================================================================
 with tab_sources:
     render_data_sources_tab()
