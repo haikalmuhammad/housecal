@@ -6,8 +6,6 @@ from datetime import datetime
 
 import pandas as pd
 import streamlit as st
-import matplotlib.pyplot as plt  # (kept; you can remove later if unused)
-import streamlit.components.v1 as components  # (kept; optional)
 import plotly.graph_objects as go
 
 # =============================================================================
@@ -632,7 +630,6 @@ def calculate_scenario(s: dict, coeffs: dict) -> dict:
     carbon = calculate_operational_carbon(total_electricity_kwh_y, water_use["V_total_m3_y"], coeffs)
     opex = calculate_opex(total_electricity_kwh_y, water_use["V_total_m3_y"], coeffs)
     energy_intensity = (total_electricity_kwh_y / s["floorArea"]) if s["floorArea"] > 0 else 0.0
-
     capex = compute_capex_total(s)
 
     return {
@@ -927,9 +924,7 @@ def show_city_caption(prefix: str):
         st.caption(f"Climate zone: **{z}** · Default HDD (base 18°C): **{hdd:g}**")
 
 def show_envelope_caption(element: str, label: str):
-    if label in (PLACEHOLDER, None):
-        return
-    if label == "Custom":
+    if label in (PLACEHOLDER, None, "Custom"):
         return
     if element in ("roof", "wall", "floor"):
         r = LOOKUP["thermal_envelope"][f"{element}R_m2K_per_W"][label]
@@ -942,18 +937,14 @@ def show_envelope_caption(element: str, label: str):
         st.caption(f"Performance: **U={u:g} W/m²K** · Capex: **{fmt_money(cost)} /m² window**")
 
 def show_system_caption(sys_block: str, label: str):
-    if label in (PLACEHOLDER, None):
-        return
-    if label == "Custom":
+    if label in (PLACEHOLDER, None, "Custom"):
         return
     cop = LOOKUP["systems"][sys_block]["cop"][label]
     cost = LOOKUP["systems"][sys_block]["install_cost_nzd"][label]
     st.caption(f"Performance: **COP={cop:g}** · Install capex: **{fmt_money(cost)}**")
 
 def show_fixture_caption(kind: str, label: str):
-    if label in (PLACEHOLDER, None):
-        return
-    if label == "Custom":
+    if label in (PLACEHOLDER, None, "Custom"):
         return
     if kind == "toilet":
         v = LOOKUP["fixtures"]["toilet"]["l_per_flush"][label]
@@ -965,7 +956,7 @@ def show_fixture_caption(kind: str, label: str):
         st.caption(f"Water: **{v:g} L/min** · Install capex: **{fmt_money(c)}**")
 
 # =============================================================================
-# INPUT PANELS (Reset REMOVED)
+# INPUT PANELS
 # =============================================================================
 def scenario_panel(prefix: str, title: str):
     st.subheader(title)
@@ -1146,44 +1137,191 @@ def metric_vals(b_val: float | None, o_val: float | None, dec: int):
     return b_s, o_s, fmt_num(d, dec), direction_arrow(d)
 
 # =============================================================================
-# INTERACTIVE CHARTS (Plotly)
+# CHARTS (interactive, baseline vs option, breakdown-oriented)
 # =============================================================================
-def plotly_bar_compare(title: str, unit: str, baseline: float, option: float | None):
-    labels = ["Baseline", "Option"]
-    vals = [baseline, option if option is not None else 0.0]
+def plot_kpi_grouped_bars(b_res: dict, o_res: dict | None):
+    labels = ["Energy (kWh/y)", "Water (m³/y)", "Carbon (kgCO₂e/y)", "OPEX (NZD/y)", "CAPEX (NZD)"]
+    b_vals = [
+        b_res["totalElectricity_kwh_y"],
+        b_res["waterConsumption"]["V_total_m3_y"],
+        b_res["carbon"]["CO2_total_kg_y"],
+        b_res["opex"]["opex_total_nzd_y"],
+        b_res["capex"]["capex_total_nzd"],
+    ]
+    o_vals = [
+        o_res["totalElectricity_kwh_y"],
+        o_res["waterConsumption"]["V_total_m3_y"],
+        o_res["carbon"]["CO2_total_kg_y"],
+        o_res["opex"]["opex_total_nzd_y"],
+        o_res["capex"]["capex_total_nzd"],
+    ] if o_res else None
 
     fig = go.Figure()
-    fig.add_trace(go.Bar(x=labels, y=vals, name=title))
+    fig.add_trace(go.Bar(name="Baseline", x=labels, y=b_vals))
+    if o_res:
+        fig.add_trace(go.Bar(name="Option", x=labels, y=o_vals))
     fig.update_layout(
-        title=title,
-        xaxis_title="Scenario",
-        yaxis_title=unit,
-        height=320,
-        margin=dict(l=20, r=20, t=50, b=30),
-        showlegend=False,
+        title="KPI comparison (headline)",
+        barmode="group",
+        height=360,
+        margin=dict(l=20, r=20, t=60, b=50),
+        xaxis_tickangle=-15,
     )
-    if option is None:
-        fig.add_annotation(
-            x="Option", y=0,
-            text="Option not calculated",
-            showarrow=False,
-            yshift=18
-        )
     st.plotly_chart(fig, use_container_width=True)
 
-def plotly_pie_breakdown(title: str, breakdown: dict, unit: str):
-    # breakdown: dict[label -> value]
-    labels = list(breakdown.keys())
-    values = list(breakdown.values())
+def plot_energy_enduse_stacked(b_res: dict, o_res: dict | None):
+    enduses = ["Space heating", "Water heating", "Lighting"]
+    b_stack = [
+        b_res["spaceHeating"]["Q_purchased_kwh_y"],
+        b_res["waterHeating"]["Q_purchased_kwh_y"],
+        b_res["lighting"]["Q_total_kwh_y"],
+    ]
+    fig = go.Figure()
+    # Baseline
+    for eu, y in zip(enduses, b_stack):
+        fig.add_trace(go.Bar(name=eu, x=["Baseline"], y=[y]))
+    # Option
+    if o_res:
+        o_stack = [
+            o_res["spaceHeating"]["Q_purchased_kwh_y"],
+            o_res["waterHeating"]["Q_purchased_kwh_y"],
+            o_res["lighting"]["Q_total_kwh_y"],
+        ]
+        for eu, y in zip(enduses, o_stack):
+            fig.add_trace(go.Bar(name=eu, x=["Option"], y=[y], showlegend=False))
 
-    fig = go.Figure(
-        data=[go.Pie(labels=labels, values=values, hole=0.45)]
-    )
     fig.update_layout(
-        title=f"{title} ({unit})",
-        height=340,
-        margin=dict(l=20, r=20, t=55, b=20),
-        showlegend=True,
+        title="Energy end-use composition (stacked)",
+        barmode="stack",
+        height=360,
+        margin=dict(l=20, r=20, t=60, b=50),
+        yaxis_title="kWh/year",
+    )
+    st.plotly_chart(fig, use_container_width=True)
+
+def plot_energy_delta_waterfall(b_res: dict, o_res: dict | None):
+    if not o_res:
+        st.info("Calculate & Compare to see delta waterfall.")
+        return
+
+    d_space = o_res["spaceHeating"]["Q_purchased_kwh_y"] - b_res["spaceHeating"]["Q_purchased_kwh_y"]
+    d_waterheat = o_res["waterHeating"]["Q_purchased_kwh_y"] - b_res["waterHeating"]["Q_purchased_kwh_y"]
+    d_light = o_res["lighting"]["Q_total_kwh_y"] - b_res["lighting"]["Q_total_kwh_y"]
+    base_total = b_res["totalElectricity_kwh_y"]
+    opt_total = o_res["totalElectricity_kwh_y"]
+
+    fig = go.Figure(go.Waterfall(
+        measure=["absolute", "relative", "relative", "relative", "total"],
+        x=["Baseline total", "Δ Space heating", "Δ Water heating", "Δ Lighting", "Option total"],
+        y=[base_total, d_space, d_waterheat, d_light, opt_total],
+        connector={"line": {"width": 1}},
+    ))
+    fig.update_layout(
+        title="Delta waterfall (electricity by end-use)",
+        height=380,
+        margin=dict(l=20, r=20, t=60, b=50),
+        yaxis_title="kWh/year",
+    )
+    st.plotly_chart(fig, use_container_width=True)
+
+def plot_capex_breakdown_grouped(b_res: dict, o_res: dict | None):
+    cats = ["Envelope", "Systems", "Fixtures"]
+    b = b_res["capex"]["breakdown_nzd"]
+
+    fig = go.Figure()
+    fig.add_trace(go.Bar(name="Baseline", x=cats, y=[b["Envelope"], b["Systems"], b["Fixtures"]]))
+    if o_res:
+        o = o_res["capex"]["breakdown_nzd"]
+        fig.add_trace(go.Bar(name="Option", x=cats, y=[o["Envelope"], o["Systems"], o["Fixtures"]]))
+
+    fig.update_layout(
+        title="CAPEX breakdown (money transparency)",
+        barmode="group",
+        height=360,
+        margin=dict(l=20, r=20, t=60, b=50),
+        yaxis_title="NZD",
+    )
+    st.plotly_chart(fig, use_container_width=True)
+
+def plot_payback_cumulative_line(b_res: dict, o_res: dict | None, horizon_years: int = 20):
+    if not o_res:
+        st.info("Calculate & Compare to see cumulative payback line.")
+        return
+
+    base_opex = b_res["opex"]["opex_total_nzd_y"]
+    opt_opex = o_res["opex"]["opex_total_nzd_y"]
+    annual_savings = base_opex - opt_opex
+
+    base_capex = b_res["capex"]["capex_total_nzd"]
+    opt_capex = o_res["capex"]["capex_total_nzd"]
+    inc_capex = opt_capex - base_capex
+
+    years = list(range(0, horizon_years + 1))
+    cum = [(-inc_capex) + annual_savings * t for t in years]
+
+    fig = go.Figure()
+    fig.add_trace(go.Scatter(x=years, y=cum, mode="lines+markers", name="Cumulative net savings"))
+    fig.update_layout(
+        title="Payback cumulative line (Option vs Baseline)",
+        height=360,
+        margin=dict(l=20, r=20, t=60, b=50),
+        xaxis_title="Year",
+        yaxis_title="NZD (cumulative)",
+    )
+
+    if annual_savings > 0 and inc_capex > 0:
+        pb = inc_capex / annual_savings
+        if 0 <= pb <= horizon_years:
+            fig.add_vline(x=pb, line_width=1)
+            fig.add_annotation(x=pb, y=0, text=f"Breakeven ~ {pb:.1f}y", showarrow=True, arrowhead=2)
+
+    st.plotly_chart(fig, use_container_width=True)
+
+def plot_water_enduse_stacked(b_res: dict, o_res: dict | None):
+    b_br = b_res["waterConsumption"]["breakdown_m3_y"]
+    enduses = list(b_br.keys())
+
+    fig = go.Figure()
+    for eu in enduses:
+        fig.add_trace(go.Bar(name=eu, x=["Baseline"], y=[b_br[eu]]))
+
+    if o_res:
+        o_br = o_res["waterConsumption"]["breakdown_m3_y"]
+        for eu in enduses:
+            fig.add_trace(go.Bar(name=eu, x=["Option"], y=[o_br.get(eu, 0.0)], showlegend=False))
+
+    fig.update_layout(
+        title="Water end-use composition (stacked)",
+        barmode="stack",
+        height=360,
+        margin=dict(l=20, r=20, t=60, b=50),
+        yaxis_title="m³/year",
+    )
+    st.plotly_chart(fig, use_container_width=True)
+
+def plot_water_delta_waterfall(b_res: dict, o_res: dict | None):
+    if not o_res:
+        st.info("Calculate & Compare to see water delta waterfall.")
+        return
+
+    b_total = b_res["waterConsumption"]["V_total_m3_y"]
+    o_total = o_res["waterConsumption"]["V_total_m3_y"]
+
+    b_br = b_res["waterConsumption"]["breakdown_m3_y"]
+    o_br = o_res["waterConsumption"]["breakdown_m3_y"]
+    deltas = {k: o_br.get(k, 0.0) - b_br.get(k, 0.0) for k in b_br.keys()}
+
+    fig = go.Figure(go.Waterfall(
+        measure=["absolute"] + ["relative"] * len(deltas) + ["total"],
+        x=["Baseline total"] + [f"Δ {k}" for k in deltas.keys()] + ["Option total"],
+        y=[b_total] + list(deltas.values()) + [o_total],
+        connector={"line": {"width": 1}},
+    ))
+    fig.update_layout(
+        title="Delta waterfall (water by end-use)",
+        height=380,
+        margin=dict(l=20, r=20, t=60, b=50),
+        yaxis_title="m³/year",
     )
     st.plotly_chart(fig, use_container_width=True)
 
@@ -1192,7 +1330,6 @@ def plotly_pie_breakdown(title: str, breakdown: dict, unit: str):
 # =============================================================================
 init_defaults()
 
-# If baseline already computed and option unlocked, seed option once (safety)
 if st.session_state.get("baseline_ready", False) and st.session_state.get("option_unlocked", False) and not st.session_state.get("option_seeded", False):
     seed_option_from_baseline_once()
 
@@ -1218,13 +1355,14 @@ tab_calc, tab_formulas, tab_sources = st.tabs(["Calculator", "Formulas", "Data s
 # TAB 1: CALCULATOR
 # =============================================================================
 with tab_calc:
-    left, right = st.columns([1.45, 1.0], gap="large")
+    # Equal width between inputs and results (so results not too small)
+    left, right = st.columns([1, 1], gap="large")
 
-    INPUT_H = 820
-    RESULTS_H = 820
+    INPUT_H = 860
+    RESULTS_H = 860
 
     # -------------------------
-    # LEFT: inputs (Baseline + Option in ONE scroll box once unlocked)
+    # LEFT: inputs (Baseline + Option in SAME scroll box)
     # -------------------------
     with left:
         try:
@@ -1233,30 +1371,26 @@ with tab_calc:
             input_box = st.container()
 
         with input_box:
-            # BASELINE (always visible)
+            # Baseline always visible in the same box
             scenario_panel("b", "Baseline")
 
             b_now = get_scenario("b")
             missing_b = validate_scenario(b_now)
 
             st.divider()
-
-            if not st.session_state.get("baseline_ready", False):
+            if not st.session_state["baseline_ready"]:
                 if missing_b:
                     st.info("Baseline incomplete. Missing: " + ", ".join(missing_b))
-
-                if st.button("Calculate Baseline", use_container_width=True, disabled=bool(missing_b), key="btn_calc_baseline"):
+                if st.button("Calculate Baseline", use_container_width=True, disabled=bool(missing_b)):
                     st.session_state["baseline_ready"] = True
                     st.session_state["option_unlocked"] = True
-
                     if not st.session_state.get("option_seeded", False):
                         seed_option_from_baseline_once()
-
                     st.rerun()
             else:
-                st.success("Baseline calculated. Option is unlocked below.")
+                st.success("Baseline calculated. Option is available below.")
 
-            # OPTION (only visible after baseline calc) — still inside same scroll box
+            # Option lives directly under baseline inside SAME scroll box
             if st.session_state.get("option_unlocked", False):
                 st.divider()
                 scenario_panel("o", "Option")
@@ -1265,19 +1399,17 @@ with tab_calc:
                 missing_o = validate_scenario(o_now)
 
                 st.divider()
-
                 if not st.session_state.get("compare_ready", False):
                     if missing_o:
                         st.info("Option incomplete. Missing: " + ", ".join(missing_o))
-
-                    if st.button("Calculate & Compare", use_container_width=True, disabled=bool(missing_o), key="btn_calc_compare"):
+                    if st.button("Calculate & Compare", use_container_width=True, disabled=bool(missing_o)):
                         st.session_state["compare_ready"] = True
                         st.rerun()
                 else:
                     st.success("Comparison activated. Editing inputs updates results live.")
 
     # -------------------------
-    # RIGHT: results (scroll box + cards + charts)
+    # RIGHT: results (cards + charts)
     # -------------------------
     with right:
         try:
@@ -1292,6 +1424,7 @@ with tab_calc:
             b_res = None
             o_res = None
 
+            # Baseline calc (live after baseline_ready)
             if not st.session_state.get("baseline_ready", False):
                 st.info("Fill Baseline inputs and click **Calculate Baseline**.")
             else:
@@ -1303,6 +1436,7 @@ with tab_calc:
                     b_res = calculate_scenario(b_now, get_coeffs("b"))
                     st.session_state["baseline_results"] = b_res
 
+            # Option calc (live after compare_ready)
             if st.session_state.get("compare_ready", False):
                 o_now = get_scenario("o")
                 missing_o = validate_scenario(o_now)
@@ -1312,8 +1446,8 @@ with tab_calc:
                     o_res = calculate_scenario(o_now, get_coeffs("o"))
                     st.session_state["option_results"] = o_res
 
+            # KPI cards
             if b_res is not None:
-                # Values
                 base_energy = b_res["totalElectricity_kwh_y"]
                 base_water = b_res["waterConsumption"]["V_total_m3_y"]
                 base_carbon = b_res["carbon"]["CO2_total_kg_y"]
@@ -1332,7 +1466,6 @@ with tab_calc:
                 b_op, o_op, d_op, d_dir_op = metric_vals(base_opex, opt_opex, 0)
                 b_cap, o_cap, d_cap, d_dir_cap = metric_vals(base_capex, opt_capex, 0)
 
-                # Payback
                 pb_years = "—"
                 pb_note = None
                 if o_res is not None:
@@ -1348,7 +1481,6 @@ with tab_calc:
                         pb_years = fmt_num(inc_capex / savings, 1)
                         pb_note = "Payback = (Capex increase) ÷ (Annual opex savings)."
 
-                # KPI Cards: 2 cols × 3 rows
                 c1, c2 = st.columns(2, gap="small")
                 with c1:
                     render_metric_card("Total energy use", "kWh/year", b_s, o_s, d_s, d_dir)
@@ -1367,32 +1499,32 @@ with tab_calc:
                 with c2:
                     render_payback_card(pb_years, pb_note)
 
-                # Interactive charts
+                # Charts (2-column grid inside results box)
                 st.divider()
-                st.markdown("### Interactive charts")
+                st.markdown("### Charts (breakdown-focused)")
 
-                # Chart 1: KPI bars
-                plotly_bar_compare("Total electricity", "kWh/year", base_energy, opt_energy)
-                plotly_bar_compare("Total water", "m³/year", base_water, opt_water)
+                ch1, ch2 = st.columns(2, gap="small")
+                with ch1:
+                    plot_kpi_grouped_bars(b_res, o_res)
+                with ch2:
+                    plot_capex_breakdown_grouped(b_res, o_res)
 
-                # Chart 2: breakdown pies (baseline vs option when available)
-                # Electricity composition: space heating + water heating + lighting
-                b_e_break = {
-                    "Space heating": b_res["spaceHeating"]["Q_purchased_kwh_y"],
-                    "Water heating": b_res["waterHeating"]["Q_purchased_kwh_y"],
-                    "Lighting": b_res["lighting"]["Q_total_kwh_y"],
-                }
-                plotly_pie_breakdown("Baseline electricity breakdown", b_e_break, "kWh/year")
+                ch3, ch4 = st.columns(2, gap="small")
+                with ch3:
+                    plot_energy_enduse_stacked(b_res, o_res)
+                with ch4:
+                    plot_energy_delta_waterfall(b_res, o_res)
 
-                if o_res is not None:
-                    o_e_break = {
-                        "Space heating": o_res["spaceHeating"]["Q_purchased_kwh_y"],
-                        "Water heating": o_res["waterHeating"]["Q_purchased_kwh_y"],
-                        "Lighting": o_res["lighting"]["Q_total_kwh_y"],
-                    }
-                    plotly_pie_breakdown("Option electricity breakdown", o_e_break, "kWh/year")
+                ch5, ch6 = st.columns(2, gap="small")
+                with ch5:
+                    plot_water_enduse_stacked(b_res, o_res)
+                with ch6:
+                    plot_water_delta_waterfall(b_res, o_res)
 
-                # Optional JSON export (only when compare is ready)
+                # Payback full width
+                plot_payback_cumulative_line(b_res, o_res, horizon_years=20)
+
+                # JSON export only when compare is ready
                 if o_res is not None:
                     payload = {
                         "timestamp": datetime.utcnow().isoformat() + "Z",
