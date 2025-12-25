@@ -1,6 +1,12 @@
 [theme]
-primaryColor="#F63366"
-backgroundColor="#FFFFFF"
-secondaryBackgroundColor="#F0F2F6"
-textColor="#262730"
-font="sans serif"
+primaryColor = "#16a34a"           # Green 600
+backgroundColor = "#FFFFFF"        # Clean white
+secondaryBackgroundColor = "#F7F9FA"
+textColor = "#111827"              # Dark gray
+font = "sans serif"
+
+[theme.inputs]
+labelColor = "#16a34a"             # Green for labels (optional)
+
+[theme.sidebar]
+backgroundColor = "#FFFFFF"
