@@ -1314,35 +1314,35 @@ with tab_calc:
             b_now = get_scenario("b")
             missing_b = validate_scenario(b_now)
 
+        st.divider()
+        if not st.session_state["baseline_ready"]:
+            if missing_b:
+                st.info("Baseline incomplete. Missing: " + ", ".join(missing_b))
+            if st.button("Calculate Baseline", use_container_width=True, disabled=bool(missing_b)):
+                st.session_state["baseline_ready"] = True
+                st.session_state["option_unlocked"] = True
+                if not st.session_state.get("option_seeded", False):
+                    seed_option_from_baseline_once()
+                st.rerun()
+        else:
+            st.success("Baseline calculated. You can now unlock and compare Option.")
+
+        if st.session_state.get("option_unlocked", False):
             st.divider()
-            if not st.session_state["baseline_ready"]:
-                if missing_b:
-                    st.info("Baseline incomplete. Missing: " + ", ".join(missing_b))
-                if st.button("Calculate Baseline", use_container_width=True, disabled=bool(missing_b)):
-                    st.session_state["baseline_ready"] = True
-                    st.session_state["option_unlocked"] = True
-                    if not st.session_state.get("option_seeded", False):
-                        seed_option_from_baseline_once()
+            scenario_panel("o", "Option")
+
+            o_now = get_scenario("o")
+            missing_o = validate_scenario(o_now)
+
+            st.divider()
+            if not st.session_state.get("compare_ready", False):
+                if missing_o:
+                    st.info("Option incomplete. Missing: " + ", ".join(missing_o))
+                if st.button("Calculate & Compare", use_container_width=True, disabled=bool(missing_o)):
+                    st.session_state["compare_ready"] = True
                     st.rerun()
             else:
-                st.success("Baseline calculated. You can now unlock and compare Option.")
-
-            if st.session_state.get("option_unlocked", False):
-                st.divider()
-                scenario_panel("o", "Option")
-
-                o_now = get_scenario("o")
-                missing_o = validate_scenario(o_now)
-
-                st.divider()
-                if not st.session_state.get("compare_ready", False):
-                    if missing_o:
-                        st.info("Option incomplete. Missing: " + ", ".join(missing_o))
-                    if st.button("Calculate & Compare", use_container_width=True, disabled=bool(missing_o)):
-                        st.session_state["compare_ready"] = True
-                        st.rerun()
-                else:
-                    st.success("Comparison activated. Editing inputs will update results live.")
+                st.success("Comparison activated. Editing inputs will update results live.")
 
     # -------------------------
     # RIGHT: results
