@@ -37,7 +37,6 @@ def help_default_source(
     return " ".join(parts)
 
 def inject_card_css():
-    # IMPORTANT: must be injected on every rerun (Streamlit rebuilds DOM).
     st.markdown(
         """
         <style>
@@ -473,6 +472,14 @@ def _geometry_areas(floor_area: float, ceiling_h: float, window_area: float) -> 
     return {"roof": roof_area, "wall": wall_area, "floor": floor_area, "window": window_area}
 
 def calculate_space_heating(s: dict) -> dict:
+    """
+    Heat loss coefficient method:
+      U = 1/R (for floor/roof/wall); window uses U directly
+      H_element = Area * U  [W/K]
+      H_total = sum(H_element) [W/K]
+      Delivered heat (kWh/y) = H_total * HDD * 24 / 1000
+      Purchased electricity (kWh/y) = Delivered / COP
+    """
     HDD = s["HDD_base18"]
     areas = _geometry_areas(s["floorArea"], s["ceilingHeight"], s["windowArea"])
 
@@ -556,6 +563,7 @@ def calculate_water_heating_from_enduse(s: dict, enduse_L_y: dict) -> dict:
     deltaT = float(u["hotWater_setpoint_C"]) - float(u["coldWater_inlet_C"])
     cp = float(LOOKUP["constants"]["cp_kj_per_kgC"])
 
+    # Delivered hot water energy (kWh/y) = (V_hot(L) * Cp(kJ/kgC) * ΔT(C)) / 3600 (kJ per kWh)
     delivered_kwh = (V_hot_L_y * cp * deltaT) / 3600.0
     cop = s["waterHeatingCOP"]
 
@@ -738,7 +746,6 @@ def init_defaults():
         st.session_state.setdefault(f"{p}_hw_frac_laundry", float(hw["laundry"]))
         st.session_state.setdefault(f"{p}_hw_frac_dishwasher", float(hw["dishwasher"]))
 
-    # categorical defaults
     cat_keys = [
         "roofRLabel", "wallRLabel", "floorRLabel", "windowULabel",
         "spaceHeatingSystem", "waterHeatingSystem",
@@ -965,7 +972,6 @@ def scenario_panel(prefix: str, title: str):
         apply_code_minimum(prefix)
         st.rerun()
 
-    # 1) Core + Climate + Lighting
     with st.expander("Core climate + lighting", expanded=True):
         cc1, cc2 = st.columns(2, gap="small")
 
@@ -995,7 +1001,6 @@ def scenario_panel(prefix: str, title: str):
             st.number_input("Lighting hours/day", min_value=0.0, max_value=24.0, step=0.5, key=f"{prefix}_light_hours", help=HELP["light_hours"])
             st.caption("Formula: count × watts × hours/day × 365 ÷ 1000")
 
-    # 2) Envelope + Systems + Water
     with st.expander("Envelope + systems + water", expanded=False):
         ec1, ec2 = st.columns(2, gap="small")
 
@@ -1069,7 +1074,6 @@ def scenario_panel(prefix: str, title: str):
                     st.number_input("Cycles/week (dishwasher)", min_value=0.0, max_value=50.0, step=1.0, key=f"{prefix}_dish_cycles")
                     st.number_input("L/cycle (dishwasher)", min_value=0.0, max_value=100.0, step=1.0, key=f"{prefix}_dish_L")
 
-    # 3) Optional
     with st.expander("Optional: usage + fractions + tariffs + emissions", expanded=False):
         st.caption("Use this section only if you want to tailor behaviour assumptions or local pricing/factors.")
         oc1, oc2 = st.columns(2, gap="small")
@@ -1137,193 +1141,106 @@ def metric_vals(b_val: float | None, o_val: float | None, dec: int):
     return b_s, o_s, fmt_num(d, dec), direction_arrow(d)
 
 # =============================================================================
-# CHARTS (interactive, baseline vs option, breakdown-oriented)
+# CHARTS (requested: 5 breakdown charts, Baseline vs Option)
 # =============================================================================
-def plot_kpi_grouped_bars(b_res: dict, o_res: dict | None):
-    labels = ["Energy (kWh/y)", "Water (m³/y)", "Carbon (kgCO₂e/y)", "OPEX (NZD/y)", "CAPEX (NZD)"]
-    b_vals = [
-        b_res["totalElectricity_kwh_y"],
-        b_res["waterConsumption"]["V_total_m3_y"],
-        b_res["carbon"]["CO2_total_kg_y"],
-        b_res["opex"]["opex_total_nzd_y"],
-        b_res["capex"]["capex_total_nzd"],
-    ]
-    o_vals = [
-        o_res["totalElectricity_kwh_y"],
-        o_res["waterConsumption"]["V_total_m3_y"],
-        o_res["carbon"]["CO2_total_kg_y"],
-        o_res["opex"]["opex_total_nzd_y"],
-        o_res["capex"]["capex_total_nzd"],
-    ] if o_res else None
-
+def _stacked_two_bars(title: str, y_title: str, baseline_parts: dict, option_parts: dict | None):
+    """
+    baseline_parts and option_parts are dict(label -> value) in the SAME label universe.
+    Produces stacked bar for Baseline and stacked bar for Option.
+    """
     fig = go.Figure()
-    fig.add_trace(go.Bar(name="Baseline", x=labels, y=b_vals))
-    if o_res:
-        fig.add_trace(go.Bar(name="Option", x=labels, y=o_vals))
-    fig.update_layout(
-        title="KPI comparison (headline)",
-        barmode="group",
-        height=360,
-        margin=dict(l=20, r=20, t=60, b=50),
-        xaxis_tickangle=-15,
-    )
-    st.plotly_chart(fig, use_container_width=True)
-
-def plot_energy_enduse_stacked(b_res: dict, o_res: dict | None):
-    enduses = ["Space heating", "Water heating", "Lighting"]
-    b_stack = [
-        b_res["spaceHeating"]["Q_purchased_kwh_y"],
-        b_res["waterHeating"]["Q_purchased_kwh_y"],
-        b_res["lighting"]["Q_total_kwh_y"],
-    ]
-    fig = go.Figure()
-    # Baseline
-    for eu, y in zip(enduses, b_stack):
-        fig.add_trace(go.Bar(name=eu, x=["Baseline"], y=[y]))
-    # Option
-    if o_res:
-        o_stack = [
-            o_res["spaceHeating"]["Q_purchased_kwh_y"],
-            o_res["waterHeating"]["Q_purchased_kwh_y"],
-            o_res["lighting"]["Q_total_kwh_y"],
-        ]
-        for eu, y in zip(enduses, o_stack):
-            fig.add_trace(go.Bar(name=eu, x=["Option"], y=[y], showlegend=False))
+    keys = list(baseline_parts.keys())
+    for k in keys:
+        fig.add_trace(go.Bar(name=k, x=["Baseline"], y=[baseline_parts.get(k, 0.0)]))
+    if option_parts is not None:
+        for k in keys:
+            fig.add_trace(go.Bar(name=k, x=["Option"], y=[option_parts.get(k, 0.0)], showlegend=False))
 
     fig.update_layout(
-        title="Energy end-use composition (stacked)",
+        title=title,
         barmode="stack",
         height=360,
         margin=dict(l=20, r=20, t=60, b=50),
-        yaxis_title="kWh/year",
+        yaxis_title=y_title,
     )
     st.plotly_chart(fig, use_container_width=True)
 
-def plot_energy_delta_waterfall(b_res: dict, o_res: dict | None):
-    if not o_res:
-        st.info("Calculate & Compare to see delta waterfall.")
-        return
-
-    d_space = o_res["spaceHeating"]["Q_purchased_kwh_y"] - b_res["spaceHeating"]["Q_purchased_kwh_y"]
-    d_waterheat = o_res["waterHeating"]["Q_purchased_kwh_y"] - b_res["waterHeating"]["Q_purchased_kwh_y"]
-    d_light = o_res["lighting"]["Q_total_kwh_y"] - b_res["lighting"]["Q_total_kwh_y"]
-    base_total = b_res["totalElectricity_kwh_y"]
-    opt_total = o_res["totalElectricity_kwh_y"]
-
-    fig = go.Figure(go.Waterfall(
-        measure=["absolute", "relative", "relative", "relative", "total"],
-        x=["Baseline total", "Δ Space heating", "Δ Water heating", "Δ Lighting", "Option total"],
-        y=[base_total, d_space, d_waterheat, d_light, opt_total],
-        connector={"line": {"width": 1}},
-    ))
-    fig.update_layout(
-        title="Delta waterfall (electricity by end-use)",
-        height=380,
-        margin=dict(l=20, r=20, t=60, b=50),
-        yaxis_title="kWh/year",
-    )
-    st.plotly_chart(fig, use_container_width=True)
-
-def plot_capex_breakdown_grouped(b_res: dict, o_res: dict | None):
-    cats = ["Envelope", "Systems", "Fixtures"]
-    b = b_res["capex"]["breakdown_nzd"]
-
-    fig = go.Figure()
-    fig.add_trace(go.Bar(name="Baseline", x=cats, y=[b["Envelope"], b["Systems"], b["Fixtures"]]))
-    if o_res:
-        o = o_res["capex"]["breakdown_nzd"]
-        fig.add_trace(go.Bar(name="Option", x=cats, y=[o["Envelope"], o["Systems"], o["Fixtures"]]))
-
-    fig.update_layout(
-        title="CAPEX breakdown (money transparency)",
-        barmode="group",
-        height=360,
-        margin=dict(l=20, r=20, t=60, b=50),
-        yaxis_title="NZD",
-    )
-    st.plotly_chart(fig, use_container_width=True)
-
-def plot_payback_cumulative_line(b_res: dict, o_res: dict | None, horizon_years: int = 20):
-    if not o_res:
-        st.info("Calculate & Compare to see cumulative payback line.")
-        return
-
-    base_opex = b_res["opex"]["opex_total_nzd_y"]
-    opt_opex = o_res["opex"]["opex_total_nzd_y"]
-    annual_savings = base_opex - opt_opex
-
-    base_capex = b_res["capex"]["capex_total_nzd"]
-    opt_capex = o_res["capex"]["capex_total_nzd"]
-    inc_capex = opt_capex - base_capex
-
-    years = list(range(0, horizon_years + 1))
-    cum = [(-inc_capex) + annual_savings * t for t in years]
-
-    fig = go.Figure()
-    fig.add_trace(go.Scatter(x=years, y=cum, mode="lines+markers", name="Cumulative net savings"))
-    fig.update_layout(
-        title="Payback cumulative line (Option vs Baseline)",
-        height=360,
-        margin=dict(l=20, r=20, t=60, b=50),
-        xaxis_title="Year",
-        yaxis_title="NZD (cumulative)",
+def plot_electricity_breakdown(b_res: dict, o_res: dict | None):
+    b = {
+        "Space heating": b_res["spaceHeating"]["Q_purchased_kwh_y"],
+        "Water heating": b_res["waterHeating"]["Q_purchased_kwh_y"],
+        "Lighting": b_res["lighting"]["Q_total_kwh_y"],
+    }
+    o = None
+    if o_res is not None:
+        o = {
+            "Space heating": o_res["spaceHeating"]["Q_purchased_kwh_y"],
+            "Water heating": o_res["waterHeating"]["Q_purchased_kwh_y"],
+            "Lighting": o_res["lighting"]["Q_total_kwh_y"],
+        }
+    _stacked_two_bars(
+        title="1) Electricity breakdown (kWh/year): Baseline vs Option",
+        y_title="kWh/year",
+        baseline_parts=b,
+        option_parts=o,
     )
 
-    if annual_savings > 0 and inc_capex > 0:
-        pb = inc_capex / annual_savings
-        if 0 <= pb <= horizon_years:
-            fig.add_vline(x=pb, line_width=1)
-            fig.add_annotation(x=pb, y=0, text=f"Breakeven ~ {pb:.1f}y", showarrow=True, arrowhead=2)
-
-    st.plotly_chart(fig, use_container_width=True)
-
-def plot_water_enduse_stacked(b_res: dict, o_res: dict | None):
-    b_br = b_res["waterConsumption"]["breakdown_m3_y"]
-    enduses = list(b_br.keys())
-
-    fig = go.Figure()
-    for eu in enduses:
-        fig.add_trace(go.Bar(name=eu, x=["Baseline"], y=[b_br[eu]]))
-
-    if o_res:
-        o_br = o_res["waterConsumption"]["breakdown_m3_y"]
-        for eu in enduses:
-            fig.add_trace(go.Bar(name=eu, x=["Option"], y=[o_br.get(eu, 0.0)], showlegend=False))
-
-    fig.update_layout(
-        title="Water end-use composition (stacked)",
-        barmode="stack",
-        height=360,
-        margin=dict(l=20, r=20, t=60, b=50),
-        yaxis_title="m³/year",
+def plot_water_breakdown(b_res: dict, o_res: dict | None):
+    b = b_res["waterConsumption"]["breakdown_m3_y"]
+    o = o_res["waterConsumption"]["breakdown_m3_y"] if o_res is not None else None
+    _stacked_two_bars(
+        title="2) Water breakdown (m³/year): Baseline vs Option",
+        y_title="m³/year",
+        baseline_parts=b,
+        option_parts=o,
     )
-    st.plotly_chart(fig, use_container_width=True)
 
-def plot_water_delta_waterfall(b_res: dict, o_res: dict | None):
-    if not o_res:
-        st.info("Calculate & Compare to see water delta waterfall.")
-        return
-
-    b_total = b_res["waterConsumption"]["V_total_m3_y"]
-    o_total = o_res["waterConsumption"]["V_total_m3_y"]
-
-    b_br = b_res["waterConsumption"]["breakdown_m3_y"]
-    o_br = o_res["waterConsumption"]["breakdown_m3_y"]
-    deltas = {k: o_br.get(k, 0.0) - b_br.get(k, 0.0) for k in b_br.keys()}
-
-    fig = go.Figure(go.Waterfall(
-        measure=["absolute"] + ["relative"] * len(deltas) + ["total"],
-        x=["Baseline total"] + [f"Δ {k}" for k in deltas.keys()] + ["Option total"],
-        y=[b_total] + list(deltas.values()) + [o_total],
-        connector={"line": {"width": 1}},
-    ))
-    fig.update_layout(
-        title="Delta waterfall (water by end-use)",
-        height=380,
-        margin=dict(l=20, r=20, t=60, b=50),
-        yaxis_title="m³/year",
+def plot_operational_carbon_breakdown(b_res: dict, o_res: dict | None):
+    b = {
+        "Electricity emissions": b_res["carbon"]["CO2_electricity_kg_y"],
+        "Water emissions": b_res["carbon"]["CO2_water_kg_y"],
+    }
+    o = None
+    if o_res is not None:
+        o = {
+            "Electricity emissions": o_res["carbon"]["CO2_electricity_kg_y"],
+            "Water emissions": o_res["carbon"]["CO2_water_kg_y"],
+        }
+    _stacked_two_bars(
+        title="3) Operational carbon breakdown (kgCO₂e/year): Baseline vs Option",
+        y_title="kgCO₂e/year",
+        baseline_parts=b,
+        option_parts=o,
     )
-    st.plotly_chart(fig, use_container_width=True)
+
+def plot_opex_breakdown(b_res: dict, o_res: dict | None):
+    b = {
+        "Electricity opex": b_res["opex"]["opex_electricity_nzd_y"],
+        "Water opex": b_res["opex"]["opex_water_nzd_y"],
+    }
+    o = None
+    if o_res is not None:
+        o = {
+            "Electricity opex": o_res["opex"]["opex_electricity_nzd_y"],
+            "Water opex": o_res["opex"]["opex_water_nzd_y"],
+        }
+    _stacked_two_bars(
+        title="4) Operational expenditure breakdown (NZD/year): Baseline vs Option",
+        y_title="NZD/year",
+        baseline_parts=b,
+        option_parts=o,
+    )
+
+def plot_capex_breakdown(b_res: dict, o_res: dict | None):
+    # Detailed breakdown requested for transparency
+    b = b_res["capex"]["detail_breakdown_nzd"]
+    o = o_res["capex"]["detail_breakdown_nzd"] if o_res is not None else None
+    _stacked_two_bars(
+        title="5) Capital expenditure breakdown (NZD): Baseline vs Option",
+        y_title="NZD",
+        baseline_parts=b,
+        option_parts=o,
+    )
 
 # =============================================================================
 # APP START
@@ -1355,15 +1272,12 @@ tab_calc, tab_formulas, tab_sources = st.tabs(["Calculator", "Formulas", "Data s
 # TAB 1: CALCULATOR
 # =============================================================================
 with tab_calc:
-    # Equal width between inputs and results (so results not too small)
     left, right = st.columns([1, 1], gap="large")
 
     INPUT_H = 860
     RESULTS_H = 860
 
-    # -------------------------
     # LEFT: inputs (Baseline + Option in SAME scroll box)
-    # -------------------------
     with left:
         try:
             input_box = st.container(height=INPUT_H, border=True)
@@ -1371,7 +1285,6 @@ with tab_calc:
             input_box = st.container()
 
         with input_box:
-            # Baseline always visible in the same box
             scenario_panel("b", "Baseline")
 
             b_now = get_scenario("b")
@@ -1390,7 +1303,6 @@ with tab_calc:
             else:
                 st.success("Baseline calculated. Option is available below.")
 
-            # Option lives directly under baseline inside SAME scroll box
             if st.session_state.get("option_unlocked", False):
                 st.divider()
                 scenario_panel("o", "Option")
@@ -1408,9 +1320,7 @@ with tab_calc:
                 else:
                     st.success("Comparison activated. Editing inputs updates results live.")
 
-    # -------------------------
     # RIGHT: results (cards + charts)
-    # -------------------------
     with right:
         try:
             results_box = st.container(height=RESULTS_H, border=True)
@@ -1424,7 +1334,6 @@ with tab_calc:
             b_res = None
             o_res = None
 
-            # Baseline calc (live after baseline_ready)
             if not st.session_state.get("baseline_ready", False):
                 st.info("Fill Baseline inputs and click **Calculate Baseline**.")
             else:
@@ -1436,7 +1345,6 @@ with tab_calc:
                     b_res = calculate_scenario(b_now, get_coeffs("b"))
                     st.session_state["baseline_results"] = b_res
 
-            # Option calc (live after compare_ready)
             if st.session_state.get("compare_ready", False):
                 o_now = get_scenario("o")
                 missing_o = validate_scenario(o_now)
@@ -1446,7 +1354,6 @@ with tab_calc:
                     o_res = calculate_scenario(o_now, get_coeffs("o"))
                     st.session_state["option_results"] = o_res
 
-            # KPI cards
             if b_res is not None:
                 base_energy = b_res["totalElectricity_kwh_y"]
                 base_water = b_res["waterConsumption"]["V_total_m3_y"]
@@ -1499,32 +1406,16 @@ with tab_calc:
                 with c2:
                     render_payback_card(pb_years, pb_note)
 
-                # Charts (2-column grid inside results box)
                 st.divider()
-                st.markdown("### Charts (breakdown-focused)")
+                st.markdown("### Charts (Baseline vs Option)")
 
-                ch1, ch2 = st.columns(2, gap="small")
-                with ch1:
-                    plot_kpi_grouped_bars(b_res, o_res)
-                with ch2:
-                    plot_capex_breakdown_grouped(b_res, o_res)
+                # Requested 5 charts
+                plot_electricity_breakdown(b_res, o_res)
+                plot_water_breakdown(b_res, o_res)
+                plot_operational_carbon_breakdown(b_res, o_res)
+                plot_opex_breakdown(b_res, o_res)
+                plot_capex_breakdown(b_res, o_res)
 
-                ch3, ch4 = st.columns(2, gap="small")
-                with ch3:
-                    plot_energy_enduse_stacked(b_res, o_res)
-                with ch4:
-                    plot_energy_delta_waterfall(b_res, o_res)
-
-                ch5, ch6 = st.columns(2, gap="small")
-                with ch5:
-                    plot_water_enduse_stacked(b_res, o_res)
-                with ch6:
-                    plot_water_delta_waterfall(b_res, o_res)
-
-                # Payback full width
-                plot_payback_cumulative_line(b_res, o_res, horizon_years=20)
-
-                # JSON export only when compare is ready
                 if o_res is not None:
                     payload = {
                         "timestamp": datetime.utcnow().isoformat() + "Z",
@@ -1547,12 +1438,200 @@ with tab_calc:
                     )
 
 # =============================================================================
-# TAB 2/3 placeholders
+# TAB 2: FORMULAS (filled)
 # =============================================================================
 with tab_formulas:
     st.header("Formulas")
-    st.caption("Use your existing formulas tab content here (unchanged).")
+    st.caption("This tab documents the placeholder formulas used by the prototype, including the heat-loss coefficient method.")
 
+    st.subheader("1) Energy consumption")
+    st.markdown(
+        """
+**1.1 Total energy (electricity, kWh/year)**  
+Total Energy = Space Heating + Water Heating + Lighting
+
+**1.2 Space heating electricity (kWh/year)**  
+Space Heating Electricity = (H_total × HDD × 24 / 1000) ÷ COP
+
+Where:
+- **H_total** is the total building heat loss coefficient in **W/K**
+- **HDD** is annual Heating Degree Days (base 18°C) in **K·days/year** (degree-days/year)
+- **24** converts days → hours
+- **/1000** converts W → kW
+- **COP** is heating system seasonal efficiency (dimensionless)
+
+This is a simplified steady-state, early-stage heat-loss approach (consistent with NZ early-stage guidance intent).
+        """
+    )
+
+    st.subheader("1.2.1 Heat loss coefficient (H_total)")
+    st.markdown(
+        """
+**H_total (W/K) = H_floor + H_roof + H_wall + H_window**
+
+For each element:
+- **H_element (W/K) = Area (m²) × U (W/m²K)**
+
+For floor/roof/wall:
+- **U = 1 / R**, where **R** is in **m²K/W**  
+  (Higher R → lower U → lower heat loss)
+
+For windows:
+- we use **U_window** directly in **W/m²K**
+        """
+    )
+
+    st.markdown("**Element definitions used in the tool (matching the calculator code):**")
+    st.markdown(
+        """
+- **Floor**:  
+  H_floor = floorArea × (1 / floorR)
+
+- **Roof**:  
+  H_roof = roofArea × (1 / roofR)  
+  (roofArea is approximated as floorArea)
+
+- **Wall**:  
+  wallArea = (4 × sqrt(floorArea) × ceilingHeight) − windowArea  
+  H_wall = wallArea × (1 / wallR)
+
+- **Window**:  
+  H_window = windowArea × windowU
+        """
+    )
+
+    st.markdown("**Units sanity check (why the space heating formula works):**")
+    unit_df = pd.DataFrame(
+        [
+            {"Term": "H_total", "Units": "W/K"},
+            {"Term": "H_total × HDD", "Units": "W/K × K·days = W·days"},
+            {"Term": "× 24", "Units": "W·days × hours/day = W·hours"},
+            {"Term": "/ 1000", "Units": "(W·hours)/1000 = kW·hours = kWh"},
+            {"Term": "÷ COP", "Units": "kWh / (dimensionless) = kWh (purchased electricity)"},
+        ]
+    )
+    st.dataframe(unit_df, use_container_width=True, hide_index=True)
+
+    st.subheader("1.3 Water heating electricity (kWh/year)")
+    st.markdown(
+        """
+**1.3.1 Delivered hot water energy (kWh/year)**  
+Delivered Hot Water Energy = (V_hotwater_annual × ΔT × Cp) ÷ 3600
+
+Where:
+- **V_hotwater_annual** is annual hot water volume in **L/year**
+- **ΔT** = hotWater_setpoint − coldWater_inlet in **°C**
+- **Cp** = 4.186 kJ/kg·°C (water heat capacity)  
+- **3600** converts kJ → kWh (1 kWh = 3600 kJ)
+
+**1.3.2 Purchased electricity for water heating (kWh/year)**  
+Water Heating Electricity = Delivered Hot Water Energy ÷ Water Heating COP
+
+Hot water volume is derived from end-use water volumes:
+- V_hot = V_shower×f_shower + V_tap×f_tap + V_laundry×f_laundry + V_dishwasher×f_dishwasher  
+Toilets are excluded from hot water calculations.
+        """
+    )
+
+    st.subheader("1.4 Lighting electricity (kWh/year)")
+    st.markdown(
+        """
+Lighting Electricity = (numberOfLights × wattsPerLight × hoursPerDay × 365) ÷ 1000
+        """
+    )
+
+    st.subheader("2) Water consumption (m³/year)")
+    st.markdown(
+        """
+Water Consumption = (V_toilet + V_shower + V_tap + V_laundry + V_dishwasher) ÷ 1000
+
+Where all V_* are in litres/year, then ÷1000 converts L → m³.
+        """
+    )
+
+    st.subheader("3) Operational carbon (kgCO₂e/year)")
+    st.markdown(
+        """
+Operational Carbon = CO₂_electricity + CO₂_water
+
+CO₂_electricity = Total Electricity (kWh/year) × Grid Emission Factor (kgCO₂e/kWh)  
+CO₂_water = Water Consumption (m³/year) × Water Emission Factor (kgCO₂e/m³)
+        """
+    )
+
+    st.subheader("4) Financial metrics")
+    st.markdown(
+        """
+**4.1 Operating cost (NZD/year)**  
+Opex_total = Opex_electricity + Opex_water  
+Opex_electricity = Total Electricity × electricity_tariff (NZD/kWh)  
+Opex_water = Water Consumption × water_tariff (NZD/m³)
+
+**4.2 Capital expenditure (NZD)**  
+Capex_total = Envelope + Systems + Fixtures
+
+Envelope = (roof_rate × roof_area) + (wall_rate × wall_area) + (floor_rate × floor_area) + (window_rate × window_area)  
+Systems = heating_install + water_heating_install  
+Fixtures = toilet_install + shower_install + tap_install
+
+**4.3 Payback (simple)**  
+Annual Savings (NZD/year) = Opex_baseline − Opex_option  
+Incremental Capex (NZD) = Capex_option − Capex_baseline  
+Payback (years) = Incremental Capex ÷ Annual Savings
+        """
+    )
+
+# =============================================================================
+# TAB 3: DATA SOURCES (filled)
+# =============================================================================
 with tab_sources:
     st.header("Data sources")
-    st.caption("Use your existing data sources tab content here (unchanged).")
+    st.caption("Single consolidated table of variables/indicators and their sources used in this prototype.")
+
+    sources_rows = [
+        {"Order": 1, "Module": "Energy", "Variable / Indicator": "Total Energy", "Description & Role in Model": "Total annual household energy use", "Data Type": "Calculated", "Selection Options & Default Values": "Space heating + water heating + lighting", "Source / Reference": "Derived", "Notes": "Primary output"},
+        {"Order": 2, "Module": "Energy", "Variable / Indicator": "Space Heating Energy", "Description & Role in Model": "Electricity for space heating", "Data Type": "Calculated", "Selection Options & Default Values": "(H_total × HDD × 24 / 1000) ÷ COP", "Source / Reference": "MBIE (2023)", "Notes": "Steady-state early-stage method"},
+        {"Order": 3, "Module": "Energy", "Variable / Indicator": "Heating Degree Days (HDD)", "Description & Role in Model": "Climate severity (base 18 °C)", "Data Type": "Lookup / User", "Selection Options & Default Values": "Zone 1=1200; Zone 2=1400; Zone 3=1800; Zone 4=2200; Zone 5=2400; Zone 6=3000; Custom", "Source / Reference": "InfraComfort (n.d.); MSD (2006)", "Notes": "City → climate zone"},
+        {"Order": 4, "Module": "Energy", "Variable / Indicator": "Heating System COP", "Description & Role in Model": "Seasonal heating efficiency", "Data Type": "Assumption / User", "Selection Options & Default Values": "None=0; Electric resistance=1.0; Heat pump=2.5; High-eff HP=3.5; Custom", "Source / Reference": "BRANZ (2023)", "Notes": "Typical NZ systems"},
+        {"Order": 5, "Module": "Envelope", "Variable / Indicator": "Floor R-value", "Description & Role in Model": "Floor thermal resistance", "Data Type": "Assumption / User", "Selection Options & Default Values": "Uninsulated=0.6; Basic=1.5; Code=2.0; Good=2.8; Excellent=3.5; Custom", "Source / Reference": "MBIE (2023); BRANZ (2023)", "Notes": "NZBC H1 aligned"},
+        {"Order": 6, "Module": "Envelope", "Variable / Indicator": "Roof R-value", "Description & Role in Model": "Roof thermal resistance", "Data Type": "Assumption / User", "Selection Options & Default Values": "Uninsulated=0.5; Basic=3.0; Code=6.6; Good=8.0; Excellent=10.0; Custom", "Source / Reference": "MBIE (2023); BRANZ (2023)", "Notes": "NZBC H1 aligned"},
+        {"Order": 7, "Module": "Envelope", "Variable / Indicator": "Wall R-value", "Description & Role in Model": "Wall thermal resistance", "Data Type": "Assumption / User", "Selection Options & Default Values": "Uninsulated=0.5; Basic=1.5; Code=2.0; Good=3.0; Excellent=4.0; Custom", "Source / Reference": "MBIE (2023); BRANZ (2023)", "Notes": "NZBC H1 aligned"},
+        {"Order": 8, "Module": "Envelope", "Variable / Indicator": "Window U-value", "Description & Role in Model": "Glazing heat transfer", "Data Type": "Assumption / User", "Selection Options & Default Values": "Single=5.8; Double=3.0; Low-E=2.0; Triple=1.0; Custom", "Source / Reference": "BRANZ (2023)", "Notes": "Typical NZ glazing"},
+        {"Order": 9, "Module": "Envelope", "Variable / Indicator": "Envelope Areas", "Description & Role in Model": "Floor, roof, wall, window areas", "Data Type": "User Input", "Selection Options & Default Values": "User input (m²); wall area is simplified geometry", "Source / Reference": "User-defined", "Notes": "Simplified geometry"},
+        {"Order": 10, "Module": "Water Heating", "Variable / Indicator": "Delivered Hot Water Energy", "Description & Role in Model": "Energy to heat water", "Data Type": "Calculated", "Selection Options & Default Values": "(V × ΔT × Cp) ÷ 3600", "Source / Reference": "Engineering standard", "Notes": "Physics-based"},
+        {"Order": 11, "Module": "Water Heating", "Variable / Indicator": "Heat Capacity (Cp)", "Description & Role in Model": "Thermal constant", "Data Type": "Constant", "Selection Options & Default Values": "4.186 kJ/kg·°C", "Source / Reference": "Engineering standard", "Notes": "Universal"},
+        {"Order": 12, "Module": "Water Heating", "Variable / Indicator": "Hot Water Fraction – Shower", "Description & Role in Model": "Portion of shower water heated", "Data Type": "Assumption / User", "Selection Options & Default Values": "Default=0.9", "Source / Reference": "BRANZ (2023)", "Notes": "Overrideable"},
+        {"Order": 13, "Module": "Water Heating", "Variable / Indicator": "Hot Water Fraction – Tap", "Description & Role in Model": "Portion of tap water heated", "Data Type": "Assumption / User", "Selection Options & Default Values": "Default=0.4", "Source / Reference": "BRANZ (2023)", "Notes": "Overrideable"},
+        {"Order": 14, "Module": "Water Heating", "Variable / Indicator": "Hot Water Fraction – Laundry", "Description & Role in Model": "Portion of laundry water heated", "Data Type": "Assumption / User", "Selection Options & Default Values": "Default=0.5", "Source / Reference": "BRANZ (2023)", "Notes": "Overrideable"},
+        {"Order": 15, "Module": "Water Heating", "Variable / Indicator": "Hot Water Fraction – Dishwasher", "Description & Role in Model": "Portion of dishwasher water heated", "Data Type": "Assumption / User", "Selection Options & Default Values": "Default=1.0", "Source / Reference": "BRANZ (2023)", "Notes": "Overrideable"},
+        {"Order": 16, "Module": "Water Heating", "Variable / Indicator": "Water Heating COP", "Description & Role in Model": "Hot water system efficiency", "Data Type": "Assumption / User", "Selection Options & Default Values": "None=0; Electric cylinder=1.0; HPHW=2.0; Custom", "Source / Reference": "BRANZ (2023)", "Notes": "Simplified"},
+        {"Order": 17, "Module": "Lighting", "Variable / Indicator": "Lighting Energy", "Description & Role in Model": "Annual lighting electricity", "Data Type": "Calculated", "Selection Options & Default Values": "(Lights × W × h × 365) ÷ 1000", "Source / Reference": "Derived", "Notes": "Standard load"},
+        {"Order": 18, "Module": "Lighting", "Variable / Indicator": "Number of Lights", "Description & Role in Model": "Installed fixtures", "Data Type": "User Input", "Selection Options & Default Values": "User input", "Source / Reference": "User-defined", "Notes": "No default"},
+        {"Order": 19, "Module": "Lighting", "Variable / Indicator": "Wattage per Light", "Description & Role in Model": "Lamp power", "Data Type": "User Input", "Selection Options & Default Values": "User input (W)", "Source / Reference": "User-defined", "Notes": "LED–incandescent"},
+        {"Order": 20, "Module": "Lighting", "Variable / Indicator": "Daily Usage Hours", "Description & Role in Model": "Average daily use", "Data Type": "User Input", "Selection Options & Default Values": "User input (h/day)", "Source / Reference": "User-defined", "Notes": "Early-stage"},
+        {"Order": 21, "Module": "Water", "Variable / Indicator": "Total Water Use", "Description & Role in Model": "Annual indoor water use", "Data Type": "Calculated", "Selection Options & Default Values": "Sum of end uses", "Source / Reference": "Derived", "Notes": "m³/year"},
+        {"Order": 22, "Module": "Water", "Variable / Indicator": "Toilet Flush Volume", "Description & Role in Model": "Water per flush", "Data Type": "Assumption / User", "Selection Options & Default Values": "Single=9 L; Dual std=5 L; Dual eff=4 L; Custom", "Source / Reference": "BRANZ (2023)", "Notes": "NZ fixtures"},
+        {"Order": 23, "Module": "Water", "Variable / Indicator": "Shower Flow Rate", "Description & Role in Model": "Shower water flow", "Data Type": "Assumption / User", "Selection Options & Default Values": "Standard=9; Low-flow=7; Efficient=6; Custom", "Source / Reference": "BRANZ (2023)", "Notes": "L/min"},
+        {"Order": 24, "Module": "Water", "Variable / Indicator": "Tap Flow Rate", "Description & Role in Model": "Tap water flow", "Data Type": "Assumption / User", "Selection Options & Default Values": "Standard=8; Efficient=6; Very efficient=4; Custom", "Source / Reference": "BRANZ (2023)", "Notes": "L/min"},
+        {"Order": 25, "Module": "Water", "Variable / Indicator": "Laundry Water per Cycle", "Description & Role in Model": "Washing machine demand", "Data Type": "Assumption / User", "Selection Options & Default Values": "User input (L/cycle)", "Source / Reference": "BRANZ (2023)", "Notes": ""},
+        {"Order": 26, "Module": "Water", "Variable / Indicator": "Dishwasher Water per Cycle", "Description & Role in Model": "Dishwasher demand", "Data Type": "Assumption / User", "Selection Options & Default Values": "User input (L/cycle)", "Source / Reference": "BRANZ (2023)", "Notes": ""},
+        {"Order": 27, "Module": "Carbon", "Variable / Indicator": "Electricity Emissions", "Description & Role in Model": "CO₂ from electricity use", "Data Type": "Calculated", "Selection Options & Default Values": "Energy × factor", "Source / Reference": "MfE (2024)", "Notes": "2023 value"},
+        {"Order": 28, "Module": "Carbon", "Variable / Indicator": "Grid Emission Factor", "Description & Role in Model": "Carbon intensity of grid", "Data Type": "Constant", "Selection Options & Default Values": "0.0729 kgCO₂e/kWh", "Source / Reference": "MfE (2024)", "Notes": "Location-based"},
+        {"Order": 29, "Module": "Carbon", "Variable / Indicator": "Water Emissions", "Description & Role in Model": "CO₂ from water supply", "Data Type": "Calculated", "Selection Options & Default Values": "Water × factor", "Source / Reference": "MfE (2024)", "Notes": ""},
+        {"Order": 30, "Module": "Carbon", "Variable / Indicator": "Water Emission Factor", "Description & Role in Model": "Carbon per m³ water", "Data Type": "Constant", "Selection Options & Default Values": "0.0349 kgCO₂e/m³", "Source / Reference": "MfE (2024)", "Notes": ""},
+        {"Order": 31, "Module": "Cost (Opex)", "Variable / Indicator": "Electricity Tariff", "Description & Role in Model": "Retail electricity price", "Data Type": "Default / User", "Selection Options & Default Values": "Default=0.312 NZD/kWh", "Source / Reference": "Electricity Authority (2024)", "Notes": "Editable"},
+        {"Order": 32, "Module": "Cost (Opex)", "Variable / Indicator": "Water Tariff", "Description & Role in Model": "Residential water price", "Data Type": "Default / User", "Selection Options & Default Values": "Default=2.296 NZD/m³", "Source / Reference": "Auckland Council (2025)", "Notes": "Editable"},
+        {"Order": 33, "Module": "Cost (Opex)", "Variable / Indicator": "Annual Operating Cost", "Description & Role in Model": "Total operating cost", "Data Type": "Calculated", "Selection Options & Default Values": "Energy + water", "Source / Reference": "Derived", "Notes": ""},
+        {"Order": 34, "Module": "Cost (Capex)", "Variable / Indicator": "Floor Insulation Cost", "Description & Role in Model": "Installed floor insulation", "Data Type": "Assumption / User", "Selection Options & Default Values": "0 / 20 / 40 / 70 / 110 NZD/m²", "Source / Reference": "Market benchmark", "Notes": "Early-stage"},
+        {"Order": 35, "Module": "Cost (Capex)", "Variable / Indicator": "Roof Insulation Cost", "Description & Role in Model": "Installed roof insulation", "Data Type": "Assumption / User", "Selection Options & Default Values": "0 / 15 / 25 / 35 / 35 NZD/m²", "Source / Reference": "Market benchmark", "Notes": ""},
+        {"Order": 36, "Module": "Cost (Capex)", "Variable / Indicator": "Wall Insulation Cost", "Description & Role in Model": "Installed wall insulation", "Data Type": "Assumption / User", "Selection Options & Default Values": "0 / 25 / 45 / 75 / 120 NZD/m²", "Source / Reference": "Market benchmark", "Notes": ""},
+        {"Order": 37, "Module": "Cost (Capex)", "Variable / Indicator": "Window Cost", "Description & Role in Model": "Installed glazing", "Data Type": "Assumption / User", "Selection Options & Default Values": "300 / 600 / 950 / 1400 NZD/m²", "Source / Reference": "Market benchmark", "Notes": ""},
+        {"Order": 38, "Module": "Cost (Capex)", "Variable / Indicator": "Space Heating System Cost", "Description & Role in Model": "Installed heating system", "Data Type": "Assumption / User", "Selection Options & Default Values": "0 / 1500 / 4500 / 7000 NZD", "Source / Reference": "Market benchmark", "Notes": ""},
+        {"Order": 39, "Module": "Cost (Capex)", "Variable / Indicator": "Water Heating System Cost", "Description & Role in Model": "Installed DHW system", "Data Type": "Assumption / User", "Selection Options & Default Values": "0 / 3500 / 6500 NZD", "Source / Reference": "Market benchmark", "Notes": ""},
+        {"Order": 40, "Module": "Cost (Capex)", "Variable / Indicator": "Water Fixture Costs", "Description & Role in Model": "Toilet, shower, tap upgrades", "Data Type": "Assumption / User", "Selection Options & Default Values": "As specified", "Source / Reference": "Market benchmark", "Notes": ""},
+        {"Order": 41, "Module": "Metrics", "Variable / Indicator": "Annual Savings", "Description & Role in Model": "Opex reduction", "Data Type": "Calculated", "Selection Options & Default Values": "Baseline − option", "Source / Reference": "Derived", "Notes": ""},
+        {"Order": 42, "Module": "Metrics", "Variable / Indicator": "Payback Period", "Description & Role in Model": "Investment recovery time", "Data Type": "Calculated", "Selection Options & Default Values": "Capex ÷ savings", "Source / Reference": "Derived", "Notes": "Years"},
+    ]
+
+    df_sources = pd.DataFrame(sources_rows).sort_values("Order")
+    st.dataframe(df_sources, use_container_width=True, hide_index=True)
