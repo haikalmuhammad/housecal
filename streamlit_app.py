@@ -1406,11 +1406,6 @@ with tab_calc:
         b_core_ok = section_status(missing_b, "core")
         b_env_ok = section_status(missing_b, "envsyswater")
 
-        with input_box:
-            # Pills (no more blue warning)
-            pill("Core complete" if b_core_ok else "Core incomplete", ok=b_core_ok)
-            pill("Envelope/systems/water complete" if b_env_ok else "Envelope/systems/water incomplete", ok=b_env_ok)
-
             scenario_panel(
                 "b",
                 "Baseline",
@@ -1425,9 +1420,6 @@ with tab_calc:
                 missing_o = validate_scenario(o_now)
                 o_core_ok = section_status(missing_o, "core")
                 o_env_ok = section_status(missing_o, "envsyswater")
-
-                pill("Core complete" if o_core_ok else "Core incomplete", ok=o_core_ok)
-                pill("Envelope/systems/water complete" if o_env_ok else "Envelope/systems/water incomplete", ok=o_env_ok)
 
                 scenario_panel(
                     "o",
