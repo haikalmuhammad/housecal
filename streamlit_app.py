@@ -15,26 +15,92 @@ st.set_page_config(page_title="NZ Housing Sustainability Calculator (Prototype)"
 PLACEHOLDER = "— Select —"
 
 # =============================================================================
-# HELPERS (DO NOT reference LOOKUP here)
+# THEME / CSS OVERRIDES (green palette + select highlights + tabs)
 # =============================================================================
-def help_default_source(
-    what: str,
-    default=None,
-    source: str | None = None,
-    notes: str | None = None,
-    units: str | None = None,
-) -> str:
-    parts = [what]
-    if default is not None:
-        d = default
-        if isinstance(d, float):
-            d = f"{d:g}"
-        parts.append(f"Default: {d}{(' ' + units) if units else ''}.")
-    if source:
-        parts.append(f"Source: {source}.")
-    if notes:
-        parts.append(notes)
-    return " ".join(parts)
+def inject_theme_css():
+    st.markdown(
+        """
+        <style>
+        /* --------- Global accent to green-ish --------- */
+        :root{
+          --accent: #16a34a;      /* green-600 */
+          --accent-2: #22c55e;    /* green-500 */
+          --accent-soft: rgba(34,197,94,0.12);
+          --border-soft: rgba(49,51,63,0.18);
+        }
+
+        /* Tabs (BaseWeb) */
+        div[data-baseweb="tab-list"] button[aria-selected="true"]{
+          color: var(--accent) !important;
+          border-bottom: 2px solid var(--accent) !important;
+        }
+        div[data-baseweb="tab-list"] button:hover{
+          color: var(--accent-2) !important;
+        }
+
+        /* Buttons */
+        .stButton > button {
+          border-color: var(--border-soft);
+        }
+        .stButton > button:focus,
+        .stButton > button:active {
+          outline: none !important;
+          box-shadow: 0 0 0 0.2rem var(--accent-soft) !important;
+          border-color: var(--accent) !important;
+        }
+
+        /* Select / input focus border (BaseWeb) */
+        div[data-baseweb="select"] > div:focus-within{
+          box-shadow: 0 0 0 0.2rem var(--accent-soft) !important;
+          border-color: var(--accent) !important;
+        }
+        input:focus, textarea:focus{
+          box-shadow: 0 0 0 0.2rem var(--accent-soft) !important;
+          border-color: var(--accent) !important;
+        }
+
+        /* Slider accent */
+        div[data-baseweb="slider"] div[role="slider"]{
+          box-shadow: 0 0 0 0.2rem var(--accent-soft) !important;
+          border-color: var(--accent) !important;
+        }
+
+        /* Small status pill */
+        .pill{
+          display:inline-block;
+          padding: 2px 8px;
+          border-radius: 999px;
+          font-size: 0.78rem;
+          font-weight: 700;
+          border: 1px solid var(--border-soft);
+          margin-bottom: 6px;
+        }
+        .pill.ok{
+          color: var(--accent);
+          border-color: rgba(22,163,74,0.35);
+          background: rgba(22,163,74,0.10);
+        }
+        .pill.bad{
+          opacity: 0.7;
+          background: rgba(255,255,255,0.03);
+        }
+
+        /* Action bar */
+        .actionbar{
+          position: sticky;
+          bottom: 0;
+          z-index: 20;
+          padding: 10px 10px;
+          border: 1px solid var(--border-soft);
+          border-radius: 12px;
+          background: rgba(255,255,255,0.04);
+          backdrop-filter: blur(8px);
+          margin-top: 10px;
+        }
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
 
 def inject_card_css():
     st.markdown(
@@ -74,29 +140,44 @@ def inject_card_css():
         unsafe_allow_html=True
     )
 
+inject_theme_css()
+
+# =============================================================================
+# HELPERS
+# =============================================================================
+def help_default_source(
+    what: str,
+    default=None,
+    source: str | None = None,
+    notes: str | None = None,
+    units: str | None = None,
+) -> str:
+    parts = [what]
+    if default is not None:
+        d = default
+        if isinstance(d, float):
+            d = f"{d:g}"
+        parts.append(f"Default: {d}{(' ' + units) if units else ''}.")
+    if source:
+        parts.append(f"Source: {source}.")
+    if notes:
+        parts.append(notes)
+    return " ".join(parts)
+
 # =============================================================================
 # LOOKUP TABLES (Single Source of Truth)
 # =============================================================================
 LOOKUP = {
     "constants": {
-        # Source: MfE (2024) — NZ grid & water emission factors (2023)
-        "grid_emission_factor_kgco2e_per_kwh": 0.0729,
-        "water_emission_factor_kgco2e_per_m3": 0.0349,
-
-        # Source: Electricity Authority NZ (2024) — representative retail tariff (default)
-        "electricity_tariff_nzd_per_kwh_default": 0.312,
-        # Source: Auckland Council (2025) — representative indoor residential tariff (default)
-        "water_tariff_nzd_per_m3_default": 2.296,
-
-        # Geometry
+        "grid_emission_factor_kgco2e_per_kwh": 0.0729,  # MfE (2024) – 2023
+        "water_emission_factor_kgco2e_per_m3": 0.0349,  # MfE (2024)
+        "electricity_tariff_nzd_per_kwh_default": 0.312,  # Electricity Authority (2024)
+        "water_tariff_nzd_per_m3_default": 2.296,         # Auckland Council (2025)
         "ceiling_height_m_default": 2.4,
-
-        # Thermo for water heating
-        "cp_kj_per_kgC": 4.186,
+        "cp_kj_per_kgC": 4.186,                           # engineering constant
     },
 
     "thermal_envelope": {
-        # Source: MBIE (2023); BRANZ (2023)
         "floorR_m2K_per_W": {
             "Uninsulated": 0.6,
             "Basic": 1.5,
@@ -118,15 +199,12 @@ LOOKUP = {
             "Good": 3.0,
             "Excellent": 4.0,
         },
-        # Source: MBIE (2023); BRANZ (2023)
         "windowU_W_per_m2K": {
             "Single glazed": 5.8,
             "Standard double glazed": 3.0,
             "Low-E double glazed": 2.0,
             "High-performance triple glazed": 1.0,
         },
-
-        # Source: PRD Appendix (market benchmark schedule)
         "capex_per_m2": {
             "floor": {"Uninsulated": 0, "Basic": 20, "Code minimum": 40, "Good": 70, "Excellent": 110},
             "roof":  {"Uninsulated": 0, "Basic": 15, "Code minimum": 25, "Good": 35, "Excellent": 35},
@@ -141,7 +219,6 @@ LOOKUP = {
     },
 
     "climate": {
-        # Source: InfraComfort (n.d.); MSD (2006) — HDD base 18°C magnitude bands
         "hdd_by_zone_base18": {
             "Climate Zone 1 – Warmest": 1200,
             "Climate Zone 2 – Warm": 1400,
@@ -177,7 +254,6 @@ LOOKUP = {
     },
 
     "systems": {
-        # Source: BRANZ (2023)
         "space_heating": {
             "cop": {
                 "None": 0.0,
@@ -207,7 +283,6 @@ LOOKUP = {
     },
 
     "fixtures": {
-        # Source: BRANZ (2023)
         "toilet": {
             "l_per_flush": {
                 "Single flush": 9,
@@ -248,13 +323,34 @@ LOOKUP = {
 }
 
 # =============================================================================
-# HELP TEXTS (safe: built AFTER LOOKUP exists)
+# FIXED COLOR MAP (semantic consistency across Baseline vs Option)
+# =============================================================================
+ENDUSE_COLORS = {
+    "Space heating": "#1f77b4",
+    "Water heating": "#ff7f0e",
+    "Lighting": "#2ca02c",
+
+    "Toilets": "#9467bd",
+    "Showers": "#17becf",
+    "Taps": "#8c564b",
+    "Laundry": "#e377c2",
+    "Dishwasher": "#7f7f7f",
+
+    "Electricity": "#1f77b4",
+    "Water": "#17becf",
+
+    "Envelope": "#1f77b4",
+    "Systems": "#ff7f0e",
+    "Fixtures": "#2ca02c",
+}
+
+# =============================================================================
+# HELP TEXTS (built after LOOKUP)
 # =============================================================================
 def build_help(LOOKUP):
     return {
         "closest_city": help_default_source(
             what="Closest major city used to infer Climate Zone and Heating Degree Days (HDD, base 18°C).",
-            default="—",
             source="InfraComfort (n.d.); MSD (2006) bands; city→zone mapping embedded in this tool",
             notes="Pick the closest major city. If you have a confirmed HDD, you can override it."
         ),
@@ -271,95 +367,57 @@ def build_help(LOOKUP):
             source="User override (otherwise from climate zone defaults)"
         ),
         "floor_area": help_default_source(
-            what="Conditioned floor area used in heat-loss geometry and intensity metrics.",
+            what="Conditioned floor area used in simplified heat-loss geometry and intensity metrics.",
             default=float(LOOKUP["defaults"]["core"]["floorArea"]),
             units="m²",
             source="Model default (editable)"
         ),
         "ceiling_height": help_default_source(
-            what="Average ceiling height used to approximate wall area.",
+            what="Average ceiling height used to approximate external wall area.",
             default=float(LOOKUP["defaults"]["core"]["ceilingHeight"]),
             units="m",
             source="Model default (editable)"
         ),
         "household_size": help_default_source(
-            what="Number of occupants used for per-person water end-uses.",
+            what="Number of occupants used for per-person indoor water end-uses.",
             default=int(LOOKUP["defaults"]["core"]["householdSize"]),
             units="people",
             source="Model default (editable)"
         ),
         "window_area": help_default_source(
-            what="Total window area for glazing heat-loss.",
+            what="Total window area used in glazing heat-loss component.",
             default=float(LOOKUP["defaults"]["core"]["windowArea"]),
             units="m²",
             source="Model default (editable)"
         ),
-        "light_n": help_default_source(
-            what="Total number of light fixtures.",
-            default=int(LOOKUP["defaults"]["lighting"]["numberOfLights"]),
-            source="Model default (editable)"
-        ),
-        "light_watts": help_default_source(
-            what="Average wattage per light. Typical LED is often ~6–12W.",
-            default=float(LOOKUP["defaults"]["lighting"]["wattsPerLight"]),
-            units="W",
-            source="Model default (editable)"
-        ),
-        "light_hours": help_default_source(
-            what="Average daily lighting usage time.",
-            default=float(LOOKUP["defaults"]["lighting"]["hoursPerDay"]),
-            units="hours/day",
-            source="Model default (editable)"
-        ),
         "r_value": help_default_source(
             what="R-value (m²K/W): higher is better insulation (lower heat loss).",
-            source="MBIE (2023); BRANZ (2023) banded defaults embedded in this tool",
+            source="MBIE (2023); BRANZ (2023) – banded defaults embedded in this tool",
             notes="If you select Custom, enter your own R-value and capex rate."
         ),
         "u_value": help_default_source(
             what="U-value (W/m²K): lower is better glazing performance (less heat loss).",
-            source="MBIE/BRANZ typical glazing defaults embedded in this tool",
+            source="BRANZ (2023) – typical glazing defaults embedded in this tool",
             notes="If you select Custom, enter your own U-value and window capex rate."
         ),
         "cop": help_default_source(
             what="COP (Coefficient of Performance): higher means less purchased electricity for the same delivered heat.",
-            source="BRANZ (2023) typical systems embedded in this tool"
+            source="BRANZ (2023) – typical NZ system COPs embedded in this tool"
         ),
         "fixture": help_default_source(
             what="Select fixture type to set water use rate and install capex.",
-            source="BRANZ (2023) typical fixtures embedded in this tool",
+            source="BRANZ (2023) – typical fixture performance embedded in this tool",
             notes="Custom lets you enter your own litres/flush or L/min and capex."
         ),
-        "wash_has": help_default_source(
-            what="Include washing machine water use.",
-            default=bool(LOOKUP["defaults"]["washing_machine"]["hasAppliance"]),
-            source="Model default (editable)"
-        ),
-        "dish_has": help_default_source(
-            what="Include dishwasher water use.",
-            default=bool(LOOKUP["defaults"]["dishwasher"]["hasAppliance"]),
-            source="Model default (editable)"
-        ),
-        "usage_general": help_default_source(
-            what="Behavioural assumptions for indoor water end-uses (per person).",
-            source="Model defaults (editable)",
-            notes="Use if you want to tailor the model to your household behaviour."
-        ),
-        "hw_frac": help_default_source(
-            what="Hot water fraction (0–1) for each end-use. Toilets are always treated as cold water.",
-            default="Shower 0.9; Tap 0.4; Laundry 0.5; Dishwasher 1.0",
-            source="BRANZ (2023) placeholders + user override"
-        ),
         "tariffs": help_default_source(
-            what="Retail tariffs vary by region/provider; set to match your bill.",
+            what="Retail tariffs vary by region/provider; set to match your bill if known.",
             default=f"Electricity {LOOKUP['constants']['electricity_tariff_nzd_per_kwh_default']} NZD/kWh; Water {LOOKUP['constants']['water_tariff_nzd_per_m3_default']} NZD/m³",
             source="Electricity Authority (2024); Auckland Council (2025)"
         ),
         "efs": help_default_source(
-            what="Emission factors for operational carbon.",
+            what="Emission factors for operational carbon (location-based).",
             default=f"Grid {LOOKUP['constants']['grid_emission_factor_kgco2e_per_kwh']} kgCO₂e/kWh; Water {LOOKUP['constants']['water_emission_factor_kgco2e_per_m3']} kgCO₂e/m³",
-            source="MfE (2024)",
-            notes="Adjust only if you have a justified factor for your reporting boundary."
+            source="MfE (2024)"
         ),
     }
 
@@ -408,6 +466,11 @@ def select_with_placeholder(label: str, options: list, key: str, help_text: str 
     current = st.session_state.get(key, PLACEHOLDER)
     idx = full.index(current) if current in full else 0
     return st.selectbox(label, full, index=idx, key=key, help=help_text)
+
+def pill(ok: bool, text_ok="Complete", text_bad="Incomplete"):
+    klass = "ok" if ok else "bad"
+    txt = text_ok if ok else text_bad
+    st.markdown(f'<span class="pill {klass}">{txt}</span>', unsafe_allow_html=True)
 
 # =============================================================================
 # RESOLVERS
@@ -466,6 +529,12 @@ def resolve_fixture_cost(label: str, kind: str, custom_key: str) -> float:
 # CORE CALCS
 # =============================================================================
 def _geometry_areas(floor_area: float, ceiling_h: float, window_area: float) -> dict:
+    """
+    Simplified geometry:
+    - roof area ~ floor area
+    - wall area ~ perimeter * height - window area
+      where perimeter ~ 4 * sqrt(floor_area) (square footprint assumption)
+    """
     roof_area = floor_area
     perimeter = 4.0 * math.sqrt(max(floor_area, 0.0))
     wall_area = max(perimeter * ceiling_h - window_area, 0.0)
@@ -473,12 +542,11 @@ def _geometry_areas(floor_area: float, ceiling_h: float, window_area: float) -> 
 
 def calculate_space_heating(s: dict) -> dict:
     """
-    Heat loss coefficient method:
-      U = 1/R (for floor/roof/wall); window uses U directly
-      H_element = Area * U  [W/K]
-      H_total = sum(H_element) [W/K]
-      Delivered heat (kWh/y) = H_total * HDD * 24 / 1000
-      Purchased electricity (kWh/y) = Delivered / COP
+    Space Heating Electricity (kWh/y) = (H_total × HDD × 24 / 1000) ÷ COP
+    where:
+      H_total (W/K) = sum(area_i * U_i)
+      U for floor/roof/wall derived from R: U=1/R
+      windows uses U directly
     """
     HDD = s["HDD_base18"]
     areas = _geometry_areas(s["floorArea"], s["ceilingHeight"], s["windowArea"])
@@ -494,9 +562,10 @@ def calculate_space_heating(s: dict) -> dict:
     H_window = areas["window"] * winU
     H_total = H_roof + H_wall + H_floor + H_window
 
+    # Delivered heat demand proxy (kWh/y): W/K * degree-days * hours/day -> Wh -> kWh
     delivered_kwh = (H_total * HDD * 24.0) / 1000.0
-    cop = s["spaceHeatingCOP"]
 
+    cop = s["spaceHeatingCOP"]
     if cop is None or cop <= 0:
         purchased_kwh = 0.0
         warning = "Space heating COP is 0/None → purchased set to 0."
@@ -563,10 +632,10 @@ def calculate_water_heating_from_enduse(s: dict, enduse_L_y: dict) -> dict:
     deltaT = float(u["hotWater_setpoint_C"]) - float(u["coldWater_inlet_C"])
     cp = float(LOOKUP["constants"]["cp_kj_per_kgC"])
 
-    # Delivered hot water energy (kWh/y) = (V_hot(L) * Cp(kJ/kgC) * ΔT(C)) / 3600 (kJ per kWh)
+    # Delivered DHW energy (kWh/y) = (L * kJ/kgC * C) / 3600; 1 L ~ 1 kg
     delivered_kwh = (V_hot_L_y * cp * deltaT) / 3600.0
-    cop = s["waterHeatingCOP"]
 
+    cop = s["waterHeatingCOP"]
     if cop is None or cop <= 0:
         purchased_kwh = 0.0
         warning = "Water heating COP is 0/None → purchased set to 0."
@@ -788,11 +857,9 @@ def resolve_hdd(prefix: str) -> float | None:
     city = st.session_state.get(f"{prefix}_closestCity", PLACEHOLDER)
     if city == PLACEHOLDER:
         return None
-
     use_custom = bool(st.session_state.get(f"{prefix}_use_custom_hdd", False))
     if use_custom:
         return _clamp(float(st.session_state.get(f"{prefix}_hdd_override_value", 2000.0)), 0.0, 6000.0)
-
     zone = LOOKUP["climate"]["zone_by_city"].get(city, None)
     if zone is None:
         return None
@@ -821,7 +888,7 @@ def get_scenario(prefix: str) -> dict:
     wash_has = _yn_to_bool(st.session_state[f"{prefix}_wash_has"])
     dish_has = _yn_to_bool(st.session_state[f"{prefix}_dish_has"])
 
-    scenario = {
+    return {
         "closestCity": closest_city,
         "HDD_base18": HDD,
 
@@ -888,7 +955,6 @@ def get_scenario(prefix: str) -> dict:
             "tap_install_nzd": resolve_fixture_cost(tap, "tap", f"{prefix}_tap_cost_custom"),
         },
     }
-    return scenario
 
 def validate_scenario(s: dict) -> list:
     missing = []
@@ -963,6 +1029,42 @@ def show_fixture_caption(kind: str, label: str):
         st.caption(f"Water: **{v:g} L/min** · Install capex: **{fmt_money(c)}**")
 
 # =============================================================================
+# SECTION COMPLETENESS (for the green “complete” cues)
+# =============================================================================
+def section_complete_core(prefix: str) -> bool:
+    city = st.session_state.get(f"{prefix}_closestCity", PLACEHOLDER)
+    if city == PLACEHOLDER:
+        return False
+    if resolve_hdd(prefix) is None:
+        return False
+    # Basic building info present by defaults (floor area etc) – we treat valid if >0
+    if float(st.session_state.get(f"{prefix}_floorArea", 0)) <= 0:
+        return False
+    if float(st.session_state.get(f"{prefix}_ceilingHeight", 0)) <= 0:
+        return False
+    if int(st.session_state.get(f"{prefix}_householdSize", 0)) <= 0:
+        return False
+    if float(st.session_state.get(f"{prefix}_windowArea", -1)) < 0:
+        return False
+    # lighting inputs have defaults; accept >=0
+    if int(st.session_state.get(f"{prefix}_light_n", -1)) < 0:
+        return False
+    return True
+
+def section_complete_envelope_systems_water(prefix: str) -> bool:
+    s = get_scenario(prefix)
+    missing = validate_scenario(s)
+    # This section covers envelope + systems + fixtures (not optional tariffs/usage)
+    # We consider it complete if the “main” required selection fields are not missing.
+    required_labels = {
+        "Roof insulation", "Wall insulation", "Floor insulation", "Window type",
+        "Space heating system", "Water heating system",
+        "Toilet type", "Shower type", "Tap type",
+        "Washing machine (Yes/No)", "Dishwasher (Yes/No)",
+    }
+    return all(m not in required_labels for m in missing)
+
+# =============================================================================
 # INPUT PANELS
 # =============================================================================
 def scenario_panel(prefix: str, title: str):
@@ -972,7 +1074,12 @@ def scenario_panel(prefix: str, title: str):
         apply_code_minimum(prefix)
         st.rerun()
 
+    # 1) Core + Climate + Lighting (now with heading “Building info”)
+    ok_core = section_complete_core(prefix)
+    pill(ok_core, text_ok="Core complete", text_bad="Core incomplete")
+
     with st.expander("Core climate + lighting", expanded=True):
+        st.markdown("#### Building info")
         cc1, cc2 = st.columns(2, gap="small")
 
         with cc1:
@@ -995,11 +1102,15 @@ def scenario_panel(prefix: str, title: str):
             st.number_input("Total window area (m²)", min_value=0.0, max_value=200.0, step=5.0, key=f"{prefix}_windowArea", help=HELP["window_area"])
 
         with cc2:
-            st.markdown("**Lighting**")
-            st.number_input("Number of lights", min_value=0, max_value=200, step=1, key=f"{prefix}_light_n", help=HELP["light_n"])
-            st.number_input("Watts per light", min_value=0.0, max_value=200.0, step=1.0, key=f"{prefix}_light_watts", help=HELP["light_watts"])
-            st.number_input("Lighting hours/day", min_value=0.0, max_value=24.0, step=0.5, key=f"{prefix}_light_hours", help=HELP["light_hours"])
-            st.caption("Formula: count × watts × hours/day × 365 ÷ 1000")
+            st.markdown("#### Lighting")
+            st.number_input("Number of lights", min_value=0, max_value=200, step=1, key=f"{prefix}_light_n")
+            st.number_input("Watts per light", min_value=0.0, max_value=200.0, step=1.0, key=f"{prefix}_light_watts")
+            st.number_input("Lighting hours/day", min_value=0.0, max_value=24.0, step=0.5, key=f"{prefix}_light_hours")
+            st.caption("Lighting kWh/y = (Lights × W × hours/day × 365) ÷ 1000")
+
+    # 2) Envelope + Systems + Water
+    ok_esw = section_complete_envelope_systems_water(prefix)
+    pill(ok_esw, text_ok="Envelope/systems/water complete", text_bad="Envelope/systems/water incomplete")
 
     with st.expander("Envelope + systems + water", expanded=False):
         ec1, ec2 = st.columns(2, gap="small")
@@ -1009,25 +1120,25 @@ def scenario_panel(prefix: str, title: str):
                 select_with_placeholder("Roof insulation", ROOF_OPTS, key=f"{prefix}_roofRLabel", help_text=HELP["r_value"])
                 show_envelope_caption("roof", st.session_state[f"{prefix}_roofRLabel"])
                 if st.session_state[f"{prefix}_roofRLabel"] == "Custom":
-                    st.number_input("Roof R-value (m²K/W)", min_value=0.1, max_value=20.0, step=0.1, key=f"{prefix}_roofR_custom", help=HELP["r_value"])
+                    st.number_input("Roof R-value (m²K/W)", min_value=0.1, max_value=20.0, step=0.1, key=f"{prefix}_roofR_custom")
                     st.number_input("Roof capex (NZD/m² roof)", min_value=0.0, max_value=2000.0, step=10.0, key=f"{prefix}_roofCost_custom")
 
                 select_with_placeholder("Wall insulation", WALL_OPTS, key=f"{prefix}_wallRLabel", help_text=HELP["r_value"])
                 show_envelope_caption("wall", st.session_state[f"{prefix}_wallRLabel"])
                 if st.session_state[f"{prefix}_wallRLabel"] == "Custom":
-                    st.number_input("Wall R-value (m²K/W)", min_value=0.1, max_value=20.0, step=0.1, key=f"{prefix}_wallR_custom", help=HELP["r_value"])
+                    st.number_input("Wall R-value (m²K/W)", min_value=0.1, max_value=20.0, step=0.1, key=f"{prefix}_wallR_custom")
                     st.number_input("Wall capex (NZD/m² wall)", min_value=0.0, max_value=2000.0, step=10.0, key=f"{prefix}_wallCost_custom")
 
                 select_with_placeholder("Floor insulation", FLOOR_OPTS, key=f"{prefix}_floorRLabel", help_text=HELP["r_value"])
                 show_envelope_caption("floor", st.session_state[f"{prefix}_floorRLabel"])
                 if st.session_state[f"{prefix}_floorRLabel"] == "Custom":
-                    st.number_input("Floor R-value (m²K/W)", min_value=0.1, max_value=20.0, step=0.1, key=f"{prefix}_floorR_custom", help=HELP["r_value"])
+                    st.number_input("Floor R-value (m²K/W)", min_value=0.1, max_value=20.0, step=0.1, key=f"{prefix}_floorR_custom")
                     st.number_input("Floor capex (NZD/m² floor)", min_value=0.0, max_value=2000.0, step=10.0, key=f"{prefix}_floorCost_custom")
 
                 select_with_placeholder("Window type", WIN_OPTS, key=f"{prefix}_windowULabel", help_text=HELP["u_value"])
                 show_envelope_caption("window", st.session_state[f"{prefix}_windowULabel"])
                 if st.session_state[f"{prefix}_windowULabel"] == "Custom":
-                    st.number_input("Window U-value (W/m²K)", min_value=0.1, max_value=10.0, step=0.1, key=f"{prefix}_windowU_custom", help=HELP["u_value"])
+                    st.number_input("Window U-value (W/m²K)", min_value=0.1, max_value=10.0, step=0.1, key=f"{prefix}_windowU_custom")
                     st.number_input("Windows capex (NZD/m² window)", min_value=0.0, max_value=5000.0, step=25.0, key=f"{prefix}_windowCost_custom")
 
         with ec2:
@@ -1035,61 +1146,62 @@ def scenario_panel(prefix: str, title: str):
                 select_with_placeholder("Space heating system", SPACE_SYS_OPTS, key=f"{prefix}_spaceHeatingSystem", help_text=HELP["cop"])
                 show_system_caption("space_heating", st.session_state[f"{prefix}_spaceHeatingSystem"])
                 if st.session_state[f"{prefix}_spaceHeatingSystem"] == "Custom":
-                    st.number_input("Space heating COP", min_value=0.0, max_value=10.0, step=0.1, key=f"{prefix}_spaceCOP_custom", help=HELP["cop"])
+                    st.number_input("Space heating COP", min_value=0.0, max_value=10.0, step=0.1, key=f"{prefix}_spaceCOP_custom")
                     st.number_input("Space heating install capex (NZD)", min_value=0.0, max_value=50000.0, step=100.0, key=f"{prefix}_spaceInstall_custom")
 
                 select_with_placeholder("Water heating system", WATER_SYS_OPTS, key=f"{prefix}_waterHeatingSystem", help_text=HELP["cop"])
                 show_system_caption("water_heating", st.session_state[f"{prefix}_waterHeatingSystem"])
                 if st.session_state[f"{prefix}_waterHeatingSystem"] == "Custom":
-                    st.number_input("Water heating COP", min_value=0.0, max_value=10.0, step=0.1, key=f"{prefix}_waterCOP_custom", help=HELP["cop"])
+                    st.number_input("Water heating COP", min_value=0.0, max_value=10.0, step=0.1, key=f"{prefix}_waterCOP_custom")
                     st.number_input("Water heating install capex (NZD)", min_value=0.0, max_value=50000.0, step=100.0, key=f"{prefix}_waterInstall_custom")
 
             with st.expander("Water fixtures + appliances", expanded=True):
                 select_with_placeholder("Toilet type", TOILET_OPTS, key=f"{prefix}_toiletType", help_text=HELP["fixture"])
                 show_fixture_caption("toilet", st.session_state[f"{prefix}_toiletType"])
                 if st.session_state[f"{prefix}_toiletType"] == "Custom":
-                    st.number_input("Toilet litres/flush", min_value=1.0, max_value=20.0, step=0.5, key=f"{prefix}_toilet_value_custom", help=HELP["fixture"])
+                    st.number_input("Toilet litres/flush", min_value=1.0, max_value=20.0, step=0.5, key=f"{prefix}_toilet_value_custom")
                     st.number_input("Toilet install capex (NZD)", min_value=0.0, max_value=20000.0, step=50.0, key=f"{prefix}_toilet_cost_custom")
 
                 select_with_placeholder("Shower type", SHOWER_OPTS, key=f"{prefix}_showerType", help_text=HELP["fixture"])
                 show_fixture_caption("shower", st.session_state[f"{prefix}_showerType"])
                 if st.session_state[f"{prefix}_showerType"] == "Custom":
-                    st.number_input("Shower flow (L/min)", min_value=1.0, max_value=30.0, step=0.5, key=f"{prefix}_shower_value_custom", help=HELP["fixture"])
+                    st.number_input("Shower flow (L/min)", min_value=1.0, max_value=30.0, step=0.5, key=f"{prefix}_shower_value_custom")
                     st.number_input("Shower install capex (NZD)", min_value=0.0, max_value=20000.0, step=50.0, key=f"{prefix}_shower_cost_custom")
 
                 select_with_placeholder("Tap type", TAP_OPTS, key=f"{prefix}_tapType", help_text=HELP["fixture"])
                 show_fixture_caption("tap", st.session_state[f"{prefix}_tapType"])
                 if st.session_state[f"{prefix}_tapType"] == "Custom":
-                    st.number_input("Tap flow (L/min)", min_value=1.0, max_value=30.0, step=0.5, key=f"{prefix}_tap_value_custom", help=HELP["fixture"])
+                    st.number_input("Tap flow (L/min)", min_value=1.0, max_value=30.0, step=0.5, key=f"{prefix}_tap_value_custom")
                     st.number_input("Tap install capex (NZD)", min_value=0.0, max_value=20000.0, step=50.0, key=f"{prefix}_tap_cost_custom")
 
                 st.divider()
-                st.selectbox("Has washing machine?", [PLACEHOLDER, "Yes", "No"], key=f"{prefix}_wash_has", help=HELP["wash_has"])
+                st.selectbox("Has washing machine?", [PLACEHOLDER, "Yes", "No"], key=f"{prefix}_wash_has")
                 if st.session_state[f"{prefix}_wash_has"] == "Yes":
                     st.number_input("Cycles/week (washing)", min_value=0.0, max_value=50.0, step=1.0, key=f"{prefix}_wash_cycles")
                     st.number_input("L/cycle (washing)", min_value=0.0, max_value=300.0, step=5.0, key=f"{prefix}_wash_L")
 
-                st.selectbox("Has dishwasher?", [PLACEHOLDER, "Yes", "No"], key=f"{prefix}_dish_has", help=HELP["dish_has"])
+                st.selectbox("Has dishwasher?", [PLACEHOLDER, "Yes", "No"], key=f"{prefix}_dish_has")
                 if st.session_state[f"{prefix}_dish_has"] == "Yes":
                     st.number_input("Cycles/week (dishwasher)", min_value=0.0, max_value=50.0, step=1.0, key=f"{prefix}_dish_cycles")
                     st.number_input("L/cycle (dishwasher)", min_value=0.0, max_value=100.0, step=1.0, key=f"{prefix}_dish_L")
 
+    # 3) Optional
     with st.expander("Optional: usage + fractions + tariffs + emissions", expanded=False):
         st.caption("Use this section only if you want to tailor behaviour assumptions or local pricing/factors.")
         oc1, oc2 = st.columns(2, gap="small")
 
         with oc1:
             with st.expander("Usage assumptions", expanded=True):
-                st.number_input("Hot water setpoint (°C)", min_value=30.0, max_value=80.0, step=1.0, key=f"{prefix}_hotWater_setpoint_C", help=HELP["usage_general"])
-                st.number_input("Cold water inlet (°C)", min_value=0.0, max_value=30.0, step=1.0, key=f"{prefix}_coldWater_inlet_C", help=HELP["usage_general"])
-                st.number_input("Toilet flushes/person/day", min_value=0.0, max_value=20.0, step=0.5, key=f"{prefix}_toiletFlushes_ppd", help=HELP["usage_general"])
-                st.number_input("Showers/person/day", min_value=0.0, max_value=5.0, step=0.1, key=f"{prefix}_showers_ppd", help=HELP["usage_general"])
-                st.number_input("Minutes/shower", min_value=0.0, max_value=60.0, step=0.1, key=f"{prefix}_minutes_per_shower", help=HELP["usage_general"])
-                st.number_input("Tap minutes/person/day", min_value=0.0, max_value=120.0, step=0.5, key=f"{prefix}_tapMinutes_ppd", help=HELP["usage_general"])
+                st.number_input("Hot water setpoint (°C)", min_value=30.0, max_value=80.0, step=1.0, key=f"{prefix}_hotWater_setpoint_C")
+                st.number_input("Cold water inlet (°C)", min_value=0.0, max_value=30.0, step=1.0, key=f"{prefix}_coldWater_inlet_C")
+                st.number_input("Toilet flushes/person/day", min_value=0.0, max_value=20.0, step=0.5, key=f"{prefix}_toiletFlushes_ppd")
+                st.number_input("Showers/person/day", min_value=0.0, max_value=5.0, step=0.1, key=f"{prefix}_showers_ppd")
+                st.number_input("Minutes/shower", min_value=0.0, max_value=60.0, step=0.1, key=f"{prefix}_minutes_per_shower")
+                st.number_input("Tap minutes/person/day", min_value=0.0, max_value=120.0, step=0.5, key=f"{prefix}_tapMinutes_ppd")
 
         with oc2:
             with st.expander("Hot water fractions", expanded=True):
-                st.caption(HELP["hw_frac"])
+                st.caption("Fractions (0–1). Toilets are always treated as cold water.")
                 st.slider("Shower hot water fraction", 0.0, 1.0, step=0.05, key=f"{prefix}_hw_frac_shower")
                 st.slider("Tap hot water fraction", 0.0, 1.0, step=0.05, key=f"{prefix}_hw_frac_tap")
                 st.slider("Laundry hot water fraction", 0.0, 1.0, step=0.05, key=f"{prefix}_hw_frac_laundry")
@@ -1102,7 +1214,7 @@ def scenario_panel(prefix: str, title: str):
                 st.number_input("Water emission factor (kgCO₂e/m³)", min_value=0.0, max_value=5.0, step=0.0001, key=f"{prefix}_coef_water_ef", help=HELP["efs"])
 
 # =============================================================================
-# CARDS RENDERING (2 columns x 3 rows)
+# CARDS
 # =============================================================================
 def render_metric_card(title: str, unit: str, base_val: str, opt_val: str, delta_val: str, delta_dir: str):
     st.markdown(
@@ -1141,105 +1253,110 @@ def metric_vals(b_val: float | None, o_val: float | None, dec: int):
     return b_s, o_s, fmt_num(d, dec), direction_arrow(d)
 
 # =============================================================================
-# CHARTS (requested: 5 breakdown charts, Baseline vs Option)
+# CHARTS (your requested 5 breakdown charts; fixed semantic colors)
 # =============================================================================
-def _stacked_two_bars(title: str, y_title: str, baseline_parts: dict, option_parts: dict | None):
-    """
-    baseline_parts and option_parts are dict(label -> value) in the SAME label universe.
-    Produces stacked bar for Baseline and stacked bar for Option.
-    """
+def plot_breakdown_stacked(title: str, ytitle: str, categories: list, base_vals: list, opt_vals: list | None):
     fig = go.Figure()
-    keys = list(baseline_parts.keys())
-    for k in keys:
-        fig.add_trace(go.Bar(name=k, x=["Baseline"], y=[baseline_parts.get(k, 0.0)]))
-    if option_parts is not None:
-        for k in keys:
-            fig.add_trace(go.Bar(name=k, x=["Option"], y=[option_parts.get(k, 0.0)], showlegend=False))
+
+    for cat, val in zip(categories, base_vals):
+        fig.add_trace(go.Bar(
+            name=cat,
+            x=["Baseline"],
+            y=[val],
+            marker_color=ENDUSE_COLORS.get(cat),
+            legendgroup=cat,
+        ))
+
+    if opt_vals is not None:
+        for cat, val in zip(categories, opt_vals):
+            fig.add_trace(go.Bar(
+                name=cat,
+                x=["Option"],
+                y=[val],
+                marker_color=ENDUSE_COLORS.get(cat),
+                legendgroup=cat,
+                showlegend=False,
+            ))
 
     fig.update_layout(
         title=title,
         barmode="stack",
         height=360,
         margin=dict(l=20, r=20, t=60, b=50),
-        yaxis_title=y_title,
+        yaxis_title=ytitle,
     )
     st.plotly_chart(fig, use_container_width=True)
 
-def plot_electricity_breakdown(b_res: dict, o_res: dict | None):
-    b = {
-        "Space heating": b_res["spaceHeating"]["Q_purchased_kwh_y"],
-        "Water heating": b_res["waterHeating"]["Q_purchased_kwh_y"],
-        "Lighting": b_res["lighting"]["Q_total_kwh_y"],
-    }
-    o = None
-    if o_res is not None:
-        o = {
-            "Space heating": o_res["spaceHeating"]["Q_purchased_kwh_y"],
-            "Water heating": o_res["waterHeating"]["Q_purchased_kwh_y"],
-            "Lighting": o_res["lighting"]["Q_total_kwh_y"],
-        }
-    _stacked_two_bars(
-        title="1) Electricity breakdown (kWh/year): Baseline vs Option",
-        y_title="kWh/year",
-        baseline_parts=b,
-        option_parts=o,
+def chart_electricity_breakdown(b_res: dict, o_res: dict | None):
+    cats = ["Space heating", "Water heating", "Lighting"]
+    b_vals = [
+        b_res["spaceHeating"]["Q_purchased_kwh_y"],
+        b_res["waterHeating"]["Q_purchased_kwh_y"],
+        b_res["lighting"]["Q_total_kwh_y"],
+    ]
+    o_vals = None
+    if o_res:
+        o_vals = [
+            o_res["spaceHeating"]["Q_purchased_kwh_y"],
+            o_res["waterHeating"]["Q_purchased_kwh_y"],
+            o_res["lighting"]["Q_total_kwh_y"],
+        ]
+    plot_breakdown_stacked(
+        "Electricity breakdown (Baseline vs Option)",
+        "kWh/year",
+        cats, b_vals, o_vals
     )
 
-def plot_water_breakdown(b_res: dict, o_res: dict | None):
+def chart_water_breakdown(b_res: dict, o_res: dict | None):
+    cats = ["Toilets", "Showers", "Taps", "Laundry", "Dishwasher"]
     b = b_res["waterConsumption"]["breakdown_m3_y"]
-    o = o_res["waterConsumption"]["breakdown_m3_y"] if o_res is not None else None
-    _stacked_two_bars(
-        title="2) Water breakdown (m³/year): Baseline vs Option",
-        y_title="m³/year",
-        baseline_parts=b,
-        option_parts=o,
+    b_vals = [b.get(c, 0.0) for c in cats]
+    o_vals = None
+    if o_res:
+        o = o_res["waterConsumption"]["breakdown_m3_y"]
+        o_vals = [o.get(c, 0.0) for c in cats]
+    plot_breakdown_stacked(
+        "Water breakdown (Baseline vs Option)",
+        "m³/year",
+        cats, b_vals, o_vals
     )
 
-def plot_operational_carbon_breakdown(b_res: dict, o_res: dict | None):
-    b = {
-        "Electricity emissions": b_res["carbon"]["CO2_electricity_kg_y"],
-        "Water emissions": b_res["carbon"]["CO2_water_kg_y"],
-    }
-    o = None
-    if o_res is not None:
-        o = {
-            "Electricity emissions": o_res["carbon"]["CO2_electricity_kg_y"],
-            "Water emissions": o_res["carbon"]["CO2_water_kg_y"],
-        }
-    _stacked_two_bars(
-        title="3) Operational carbon breakdown (kgCO₂e/year): Baseline vs Option",
-        y_title="kgCO₂e/year",
-        baseline_parts=b,
-        option_parts=o,
+def chart_operational_carbon_breakdown(b_res: dict, o_res: dict | None):
+    cats = ["Electricity", "Water"]
+    b_vals = [b_res["carbon"]["CO2_electricity_kg_y"], b_res["carbon"]["CO2_water_kg_y"]]
+    o_vals = None
+    if o_res:
+        o_vals = [o_res["carbon"]["CO2_electricity_kg_y"], o_res["carbon"]["CO2_water_kg_y"]]
+    plot_breakdown_stacked(
+        "Operational carbon breakdown (Baseline vs Option)",
+        "kgCO₂e/year",
+        cats, b_vals, o_vals
     )
 
-def plot_opex_breakdown(b_res: dict, o_res: dict | None):
-    b = {
-        "Electricity opex": b_res["opex"]["opex_electricity_nzd_y"],
-        "Water opex": b_res["opex"]["opex_water_nzd_y"],
-    }
-    o = None
-    if o_res is not None:
-        o = {
-            "Electricity opex": o_res["opex"]["opex_electricity_nzd_y"],
-            "Water opex": o_res["opex"]["opex_water_nzd_y"],
-        }
-    _stacked_two_bars(
-        title="4) Operational expenditure breakdown (NZD/year): Baseline vs Option",
-        y_title="NZD/year",
-        baseline_parts=b,
-        option_parts=o,
+def chart_opex_breakdown(b_res: dict, o_res: dict | None):
+    cats = ["Electricity", "Water"]
+    b_vals = [b_res["opex"]["opex_electricity_nzd_y"], b_res["opex"]["opex_water_nzd_y"]]
+    o_vals = None
+    if o_res:
+        o_vals = [o_res["opex"]["opex_electricity_nzd_y"], o_res["opex"]["opex_water_nzd_y"]]
+    plot_breakdown_stacked(
+        "Operational expenditure breakdown (Baseline vs Option)",
+        "NZD/year",
+        cats, b_vals, o_vals
     )
 
-def plot_capex_breakdown(b_res: dict, o_res: dict | None):
-    # Detailed breakdown requested for transparency
-    b = b_res["capex"]["detail_breakdown_nzd"]
-    o = o_res["capex"]["detail_breakdown_nzd"] if o_res is not None else None
-    _stacked_two_bars(
-        title="5) Capital expenditure breakdown (NZD): Baseline vs Option",
-        y_title="NZD",
-        baseline_parts=b,
-        option_parts=o,
+def chart_capex_breakdown(b_res: dict, o_res: dict | None):
+    cats = ["Envelope", "Systems", "Fixtures"]
+    b = b_res["capex"]["breakdown_nzd"]
+    b_vals = [b[c] for c in cats]
+    o_vals = None
+    if o_res:
+        o = o_res["capex"]["breakdown_nzd"]
+        o_vals = [o[c] for c in cats]
+    plot_breakdown_stacked(
+        "Capital expenditure breakdown (Baseline vs Option)",
+        "NZD",
+        cats, b_vals, o_vals
     )
 
 # =============================================================================
@@ -1247,6 +1364,7 @@ def plot_capex_breakdown(b_res: dict, o_res: dict | None):
 # =============================================================================
 init_defaults()
 
+# Seed option once baseline is calculated
 if st.session_state.get("baseline_ready", False) and st.session_state.get("option_unlocked", False) and not st.session_state.get("option_seeded", False):
     seed_option_from_baseline_once()
 
@@ -1255,10 +1373,8 @@ ROOF_OPTS = list(LOOKUP["thermal_envelope"]["roofR_m2K_per_W"].keys()) + ["Custo
 WALL_OPTS = list(LOOKUP["thermal_envelope"]["wallR_m2K_per_W"].keys()) + ["Custom"]
 FLOOR_OPTS = list(LOOKUP["thermal_envelope"]["floorR_m2K_per_W"].keys()) + ["Custom"]
 WIN_OPTS = list(LOOKUP["thermal_envelope"]["windowU_W_per_m2K"].keys()) + ["Custom"]
-
 SPACE_SYS_OPTS = list(LOOKUP["systems"]["space_heating"]["cop"].keys()) + ["Custom"]
 WATER_SYS_OPTS = list(LOOKUP["systems"]["water_heating"]["cop"].keys()) + ["Custom"]
-
 TOILET_OPTS = list(LOOKUP["fixtures"]["toilet"]["l_per_flush"].keys()) + ["Custom"]
 SHOWER_OPTS = list(LOOKUP["fixtures"]["shower"]["l_per_min"].keys()) + ["Custom"]
 TAP_OPTS = list(LOOKUP["fixtures"]["tap"]["l_per_min"].keys()) + ["Custom"]
@@ -1274,10 +1390,12 @@ tab_calc, tab_formulas, tab_sources = st.tabs(["Calculator", "Formulas", "Data s
 with tab_calc:
     left, right = st.columns([1, 1], gap="large")
 
-    INPUT_H = 860
+    INPUT_H = 820
     RESULTS_H = 860
 
-    # LEFT: inputs (Baseline + Option in SAME scroll box)
+    # -------------------------
+    # LEFT: inputs (scroll box) + ALWAYS-VISIBLE action bar below (sticky)
+    # -------------------------
     with left:
         try:
             input_box = st.container(height=INPUT_H, border=True)
@@ -1287,40 +1405,46 @@ with tab_calc:
         with input_box:
             scenario_panel("b", "Baseline")
 
-            b_now = get_scenario("b")
-            missing_b = validate_scenario(b_now)
-
-            st.divider()
-            if not st.session_state["baseline_ready"]:
-                if missing_b:
-                    st.info("Baseline incomplete. Missing: " + ", ".join(missing_b))
-                if st.button("Calculate Baseline", use_container_width=True, disabled=bool(missing_b)):
-                    st.session_state["baseline_ready"] = True
-                    st.session_state["option_unlocked"] = True
-                    if not st.session_state.get("option_seeded", False):
-                        seed_option_from_baseline_once()
-                    st.rerun()
-            else:
-                st.success("Baseline calculated. Option is available below.")
-
             if st.session_state.get("option_unlocked", False):
                 st.divider()
                 scenario_panel("o", "Option")
 
-                o_now = get_scenario("o")
-                missing_o = validate_scenario(o_now)
+        # Always-visible action bar (outside scroll container)
+        st.markdown('<div class="actionbar">', unsafe_allow_html=True)
 
-                st.divider()
-                if not st.session_state.get("compare_ready", False):
-                    if missing_o:
-                        st.info("Option incomplete. Missing: " + ", ".join(missing_o))
-                    if st.button("Calculate & Compare", use_container_width=True, disabled=bool(missing_o)):
-                        st.session_state["compare_ready"] = True
-                        st.rerun()
-                else:
-                    st.success("Comparison activated. Editing inputs updates results live.")
+        # Baseline button always visible
+        b_now = get_scenario("b")
+        missing_b = validate_scenario(b_now)
+        if not st.session_state["baseline_ready"]:
+            if missing_b:
+                st.info("Baseline incomplete. Missing: " + ", ".join(missing_b))
+            if st.button("Calculate Baseline", use_container_width=True, disabled=bool(missing_b)):
+                st.session_state["baseline_ready"] = True
+                st.session_state["option_unlocked"] = True
+                if not st.session_state.get("option_seeded", False):
+                    seed_option_from_baseline_once()
+                st.rerun()
+        else:
+            st.success("Baseline calculated.")
 
+        # Compare button always visible once option exists
+        if st.session_state.get("option_unlocked", False):
+            o_now = get_scenario("o")
+            missing_o = validate_scenario(o_now)
+            if not st.session_state.get("compare_ready", False):
+                if missing_o:
+                    st.info("Option incomplete. Missing: " + ", ".join(missing_o))
+                if st.button("Calculate & Compare", use_container_width=True, disabled=bool(missing_o)):
+                    st.session_state["compare_ready"] = True
+                    st.rerun()
+            else:
+                st.success("Comparison activated. Editing inputs updates results live.")
+
+        st.markdown("</div>", unsafe_allow_html=True)
+
+    # -------------------------
     # RIGHT: results (cards + charts)
+    # -------------------------
     with right:
         try:
             results_box = st.container(height=RESULTS_H, border=True)
@@ -1335,7 +1459,7 @@ with tab_calc:
             o_res = None
 
             if not st.session_state.get("baseline_ready", False):
-                st.info("Fill Baseline inputs and click **Calculate Baseline**.")
+                st.info("Fill Baseline inputs and click **Calculate Baseline** (button is always visible at the bottom).")
             else:
                 b_now = get_scenario("b")
                 missing_b = validate_scenario(b_now)
@@ -1407,26 +1531,35 @@ with tab_calc:
                     render_payback_card(pb_years, pb_note)
 
                 st.divider()
-                st.markdown("### Charts (Baseline vs Option)")
+                st.markdown("### Charts (breakdown-focused)")
 
-                # Requested 5 charts
-                plot_electricity_breakdown(b_res, o_res)
-                plot_water_breakdown(b_res, o_res)
-                plot_operational_carbon_breakdown(b_res, o_res)
-                plot_opex_breakdown(b_res, o_res)
-                plot_capex_breakdown(b_res, o_res)
+                # Your requested 5 charts (each compares baseline vs option; consistent colors)
+                ch1, ch2 = st.columns(2, gap="small")
+                with ch1:
+                    chart_electricity_breakdown(b_res, o_res)
+                with ch2:
+                    chart_water_breakdown(b_res, o_res)
 
+                ch3, ch4 = st.columns(2, gap="small")
+                with ch3:
+                    chart_operational_carbon_breakdown(b_res, o_res)
+                with ch4:
+                    chart_opex_breakdown(b_res, o_res)
+
+                chart_capex_breakdown(b_res, o_res)
+
+                # Export
                 if o_res is not None:
                     payload = {
                         "timestamp": datetime.utcnow().isoformat() + "Z",
                         "baseline": {"coefficients": get_coeffs("b"), "inputs": b_now, "results": b_res},
                         "option": {"coefficients": get_coeffs("o"), "inputs": o_now, "results": o_res},
                         "notes": {
-                            "scope": "Early-stage decision support; not certification; not simulation.",
+                            "scope": "Early-stage decision support; not certification; not dynamic simulation.",
                             "energy_boundary": "Space heating + water heating + lighting (excludes plug loads/appliances).",
                             "water_boundary": "Indoor water includes toilets, showers, taps, plus dishwasher/washing machine water.",
-                            "capex_boundary": "Transparent unit-cost accounting. Not investment-grade.",
-                            "hot_water_model": "Hot water derived from end-use volumes using hot water fractions (toilet excluded).",
+                            "capex_boundary": "Transparent unit-cost accounting; early-stage benchmark schedule.",
+                            "heat_loss_method": "Space heating uses steady-state heat-loss coefficient H_total × HDD × 24 / 1000, then divides by COP.",
                         },
                     }
                     st.download_button(
@@ -1438,200 +1571,172 @@ with tab_calc:
                     )
 
 # =============================================================================
-# TAB 2: FORMULAS (filled)
+# TAB 2: FORMULAS (filled from your text; concise + explicit)
 # =============================================================================
 with tab_formulas:
-    st.header("Formulas")
-    st.caption("This tab documents the placeholder formulas used by the prototype, including the heat-loss coefficient method.")
+    st.header("Formulas (model logic)")
 
-    st.subheader("1) Energy consumption")
     st.markdown(
         """
-**1.1 Total energy (electricity, kWh/year)**  
-Total Energy = Space Heating + Water Heating + Lighting
+### 1) Energy consumption
 
-**1.2 Space heating electricity (kWh/year)**  
-Space Heating Electricity = (H_total × HDD × 24 / 1000) ÷ COP
+**1.1 Total energy**
+- Total Energy (kWh/year) = Space Heating + Water Heating + Lighting
+
+**1.2 Space heating electricity (steady-state heat loss)**
+- Space Heating Electricity (kWh/year) = (H_total × HDD × 24 / 1000) ÷ Heating System COP
 
 Where:
-- **H_total** is the total building heat loss coefficient in **W/K**
-- **HDD** is annual Heating Degree Days (base 18°C) in **K·days/year** (degree-days/year)
-- **24** converts days → hours
-- **/1000** converts W → kW
-- **COP** is heating system seasonal efficiency (dimensionless)
+- H_total (W/K) = H_floor + H_roof + H_wall + H_window
+- HDD = Heating Degree Days (base 18°C), degree-days/year
+- 24 converts degree-days to degree-hours per day
+- /1000 converts Wh to kWh (since W × hours = Wh)
 
-This is a simplified steady-state, early-stage heat-loss approach (consistent with NZ early-stage guidance intent).
-        """
-    )
+**1.2.1 Heat-loss components**
+- H_floor (W/K) = floorArea × floorU, with floorU = 1 / floorR
+- H_roof (W/K) = roofArea × roofU, with roofU = 1 / roofR
+- H_wall (W/K) = wallArea × wallU, with wallU = 1 / wallR
+- H_window (W/K) = windowArea × windowU
 
-    st.subheader("1.2.1 Heat loss coefficient (H_total)")
-    st.markdown(
-        """
-**H_total (W/K) = H_floor + H_roof + H_wall + H_window**
+**Geometry (simplified)**
+- roofArea (m²) = floorArea
+- wallArea (m²) = (4 × sqrt(floorArea) × ceilingHeight) − windowArea
 
-For each element:
-- **H_element (W/K) = Area (m²) × U (W/m²K)**
+**1.2.2 HDD climate input**
+- User selects Closest City → mapped to climate zone → HDD default (base 18°C)
+- Custom HDD allowed.
 
-For floor/roof/wall:
-- **U = 1 / R**, where **R** is in **m²K/W**  
-  (Higher R → lower U → lower heat loss)
+**1.2.3 Heating COP**
+- Purchased electricity = Delivered heating ÷ COP
+- If COP ≤ 0, purchased is set to 0 (guardrail).
 
-For windows:
-- we use **U_window** directly in **W/m²K**
-        """
-    )
+**1.3 Water heating electricity**
+- Water Heating Electricity (kWh/year) = Water Heating Delivered ÷ Water Heating COP
 
-    st.markdown("**Element definitions used in the tool (matching the calculator code):**")
-    st.markdown(
-        """
-- **Floor**:  
-  H_floor = floorArea × (1 / floorR)
-
-- **Roof**:  
-  H_roof = roofArea × (1 / roofR)  
-  (roofArea is approximated as floorArea)
-
-- **Wall**:  
-  wallArea = (4 × sqrt(floorArea) × ceilingHeight) − windowArea  
-  H_wall = wallArea × (1 / wallR)
-
-- **Window**:  
-  H_window = windowArea × windowU
-        """
-    )
-
-    st.markdown("**Units sanity check (why the space heating formula works):**")
-    unit_df = pd.DataFrame(
-        [
-            {"Term": "H_total", "Units": "W/K"},
-            {"Term": "H_total × HDD", "Units": "W/K × K·days = W·days"},
-            {"Term": "× 24", "Units": "W·days × hours/day = W·hours"},
-            {"Term": "/ 1000", "Units": "(W·hours)/1000 = kW·hours = kWh"},
-            {"Term": "÷ COP", "Units": "kWh / (dimensionless) = kWh (purchased electricity)"},
-        ]
-    )
-    st.dataframe(unit_df, use_container_width=True, hide_index=True)
-
-    st.subheader("1.3 Water heating electricity (kWh/year)")
-    st.markdown(
-        """
-**1.3.1 Delivered hot water energy (kWh/year)**  
-Delivered Hot Water Energy = (V_hotwater_annual × ΔT × Cp) ÷ 3600
+Delivered hot water energy:
+- Water Heating Delivered (kWh/year) = (V_hot_annual × ΔT × Cp) ÷ 3600
 
 Where:
-- **V_hotwater_annual** is annual hot water volume in **L/year**
-- **ΔT** = hotWater_setpoint − coldWater_inlet in **°C**
-- **Cp** = 4.186 kJ/kg·°C (water heat capacity)  
-- **3600** converts kJ → kWh (1 kWh = 3600 kJ)
+- Cp = 4.186 kJ/kg·°C
+- 3600 converts kJ → kWh (1 kWh = 3600 kJ)
+- 1 L ≈ 1 kg (density assumption)
 
-**1.3.2 Purchased electricity for water heating (kWh/year)**  
-Water Heating Electricity = Delivered Hot Water Energy ÷ Water Heating COP
+Hot water volume:
+- V_hot_annual (L/year) =
+  (V_shower × hot_share_shower) +
+  (V_tap × hot_share_tap) +
+  (V_laundry × hot_share_laundry) +
+  (V_dishwasher × hot_share_dishwasher)
 
-Hot water volume is derived from end-use water volumes:
-- V_hot = V_shower×f_shower + V_tap×f_tap + V_laundry×f_laundry + V_dishwasher×f_dishwasher  
-Toilets are excluded from hot water calculations.
-        """
-    )
+Note: Toilets excluded from hot water.
 
-    st.subheader("1.4 Lighting electricity (kWh/year)")
-    st.markdown(
-        """
-Lighting Electricity = (numberOfLights × wattsPerLight × hoursPerDay × 365) ÷ 1000
-        """
-    )
+Temperature difference:
+- ΔT (°C) = hotWater_setpoint − coldWater_inlet
 
-    st.subheader("2) Water consumption (m³/year)")
-    st.markdown(
-        """
-Water Consumption = (V_toilet + V_shower + V_tap + V_laundry + V_dishwasher) ÷ 1000
+**1.4 Lighting electricity**
+- Lighting (kWh/year) = (numberOfLights × wattsPerLight × hoursPerDay × 365) ÷ 1000
 
-Where all V_* are in litres/year, then ÷1000 converts L → m³.
-        """
-    )
+---
 
-    st.subheader("3) Operational carbon (kgCO₂e/year)")
-    st.markdown(
-        """
-Operational Carbon = CO₂_electricity + CO₂_water
+### 2) Water consumption
+- Water (m³/year) = (V_toilet + V_shower + V_tap + V_laundry + V_dishwasher) ÷ 1000
 
-CO₂_electricity = Total Electricity (kWh/year) × Grid Emission Factor (kgCO₂e/kWh)  
-CO₂_water = Water Consumption (m³/year) × Water Emission Factor (kgCO₂e/m³)
-        """
-    )
+End uses:
+- Toilet (L/year) = householdSize × flushes/person/day × L/flush × 365
+- Shower (L/year) = householdSize × showers/person/day × minutes/shower × L/min × 365
+- Tap (L/year) = householdSize × tapMinutes/person/day × L/min × 365
+- Laundry (L/year) = cycles/week × L/cycle × 52 (if present)
+- Dishwasher (L/year) = cycles/week × L/cycle × 52 (if present)
 
-    st.subheader("4) Financial metrics")
-    st.markdown(
-        """
-**4.1 Operating cost (NZD/year)**  
-Opex_total = Opex_electricity + Opex_water  
-Opex_electricity = Total Electricity × electricity_tariff (NZD/kWh)  
-Opex_water = Water Consumption × water_tariff (NZD/m³)
+---
 
-**4.2 Capital expenditure (NZD)**  
-Capex_total = Envelope + Systems + Fixtures
+### 3) Operational carbon
+- Operational Carbon (kgCO₂e/year) = CO₂_electricity + CO₂_water
 
-Envelope = (roof_rate × roof_area) + (wall_rate × wall_area) + (floor_rate × floor_area) + (window_rate × window_area)  
-Systems = heating_install + water_heating_install  
-Fixtures = toilet_install + shower_install + tap_install
+Where:
+- CO₂_electricity = Total Energy × grid emission factor (kgCO₂e/kWh)
+- CO₂_water = Water (m³) × water emission factor (kgCO₂e/m³)
 
-**4.3 Payback (simple)**  
-Annual Savings (NZD/year) = Opex_baseline − Opex_option  
-Incremental Capex (NZD) = Capex_option − Capex_baseline  
-Payback (years) = Incremental Capex ÷ Annual Savings
+---
+
+### 4) Financials
+**4.1 Operating cost (Opex)**
+- Opex (NZD/year) = (Total Energy × electricity tariff) + (Water × water tariff)
+
+**4.2 Capex (installed)**
+- Capex total (NZD) = Envelope + Systems + Fixtures
+
+Envelope:
+- Roof = roof capex/m² × roofArea
+- Wall = wall capex/m² × wallArea
+- Floor = floor capex/m² × floorArea
+- Windows = window capex/m² × windowArea
+
+Systems:
+- Space heating install + Water heating install
+
+Fixtures:
+- Toilet install + Shower install + Tap install
+
+**4.3 Metrics**
+- Annual savings (NZD/year) = Opex_baseline − Opex_option
+- Payback (years) = (Capex_option − Capex_baseline) ÷ Annual savings
         """
     )
 
 # =============================================================================
-# TAB 3: DATA SOURCES (filled)
+# TAB 3: DATA SOURCES (single big table)
 # =============================================================================
 with tab_sources:
-    st.header("Data sources")
-    st.caption("Single consolidated table of variables/indicators and their sources used in this prototype.")
+    st.header("Data sources (provenance table)")
+    st.caption("This table documents each variable, its role, defaults/options, and source references (as used in the model).")
 
-    sources_rows = [
-        {"Order": 1, "Module": "Energy", "Variable / Indicator": "Total Energy", "Description & Role in Model": "Total annual household energy use", "Data Type": "Calculated", "Selection Options & Default Values": "Space heating + water heating + lighting", "Source / Reference": "Derived", "Notes": "Primary output"},
-        {"Order": 2, "Module": "Energy", "Variable / Indicator": "Space Heating Energy", "Description & Role in Model": "Electricity for space heating", "Data Type": "Calculated", "Selection Options & Default Values": "(H_total × HDD × 24 / 1000) ÷ COP", "Source / Reference": "MBIE (2023)", "Notes": "Steady-state early-stage method"},
-        {"Order": 3, "Module": "Energy", "Variable / Indicator": "Heating Degree Days (HDD)", "Description & Role in Model": "Climate severity (base 18 °C)", "Data Type": "Lookup / User", "Selection Options & Default Values": "Zone 1=1200; Zone 2=1400; Zone 3=1800; Zone 4=2200; Zone 5=2400; Zone 6=3000; Custom", "Source / Reference": "InfraComfort (n.d.); MSD (2006)", "Notes": "City → climate zone"},
-        {"Order": 4, "Module": "Energy", "Variable / Indicator": "Heating System COP", "Description & Role in Model": "Seasonal heating efficiency", "Data Type": "Assumption / User", "Selection Options & Default Values": "None=0; Electric resistance=1.0; Heat pump=2.5; High-eff HP=3.5; Custom", "Source / Reference": "BRANZ (2023)", "Notes": "Typical NZ systems"},
-        {"Order": 5, "Module": "Envelope", "Variable / Indicator": "Floor R-value", "Description & Role in Model": "Floor thermal resistance", "Data Type": "Assumption / User", "Selection Options & Default Values": "Uninsulated=0.6; Basic=1.5; Code=2.0; Good=2.8; Excellent=3.5; Custom", "Source / Reference": "MBIE (2023); BRANZ (2023)", "Notes": "NZBC H1 aligned"},
-        {"Order": 6, "Module": "Envelope", "Variable / Indicator": "Roof R-value", "Description & Role in Model": "Roof thermal resistance", "Data Type": "Assumption / User", "Selection Options & Default Values": "Uninsulated=0.5; Basic=3.0; Code=6.6; Good=8.0; Excellent=10.0; Custom", "Source / Reference": "MBIE (2023); BRANZ (2023)", "Notes": "NZBC H1 aligned"},
-        {"Order": 7, "Module": "Envelope", "Variable / Indicator": "Wall R-value", "Description & Role in Model": "Wall thermal resistance", "Data Type": "Assumption / User", "Selection Options & Default Values": "Uninsulated=0.5; Basic=1.5; Code=2.0; Good=3.0; Excellent=4.0; Custom", "Source / Reference": "MBIE (2023); BRANZ (2023)", "Notes": "NZBC H1 aligned"},
-        {"Order": 8, "Module": "Envelope", "Variable / Indicator": "Window U-value", "Description & Role in Model": "Glazing heat transfer", "Data Type": "Assumption / User", "Selection Options & Default Values": "Single=5.8; Double=3.0; Low-E=2.0; Triple=1.0; Custom", "Source / Reference": "BRANZ (2023)", "Notes": "Typical NZ glazing"},
-        {"Order": 9, "Module": "Envelope", "Variable / Indicator": "Envelope Areas", "Description & Role in Model": "Floor, roof, wall, window areas", "Data Type": "User Input", "Selection Options & Default Values": "User input (m²); wall area is simplified geometry", "Source / Reference": "User-defined", "Notes": "Simplified geometry"},
-        {"Order": 10, "Module": "Water Heating", "Variable / Indicator": "Delivered Hot Water Energy", "Description & Role in Model": "Energy to heat water", "Data Type": "Calculated", "Selection Options & Default Values": "(V × ΔT × Cp) ÷ 3600", "Source / Reference": "Engineering standard", "Notes": "Physics-based"},
-        {"Order": 11, "Module": "Water Heating", "Variable / Indicator": "Heat Capacity (Cp)", "Description & Role in Model": "Thermal constant", "Data Type": "Constant", "Selection Options & Default Values": "4.186 kJ/kg·°C", "Source / Reference": "Engineering standard", "Notes": "Universal"},
-        {"Order": 12, "Module": "Water Heating", "Variable / Indicator": "Hot Water Fraction – Shower", "Description & Role in Model": "Portion of shower water heated", "Data Type": "Assumption / User", "Selection Options & Default Values": "Default=0.9", "Source / Reference": "BRANZ (2023)", "Notes": "Overrideable"},
-        {"Order": 13, "Module": "Water Heating", "Variable / Indicator": "Hot Water Fraction – Tap", "Description & Role in Model": "Portion of tap water heated", "Data Type": "Assumption / User", "Selection Options & Default Values": "Default=0.4", "Source / Reference": "BRANZ (2023)", "Notes": "Overrideable"},
-        {"Order": 14, "Module": "Water Heating", "Variable / Indicator": "Hot Water Fraction – Laundry", "Description & Role in Model": "Portion of laundry water heated", "Data Type": "Assumption / User", "Selection Options & Default Values": "Default=0.5", "Source / Reference": "BRANZ (2023)", "Notes": "Overrideable"},
-        {"Order": 15, "Module": "Water Heating", "Variable / Indicator": "Hot Water Fraction – Dishwasher", "Description & Role in Model": "Portion of dishwasher water heated", "Data Type": "Assumption / User", "Selection Options & Default Values": "Default=1.0", "Source / Reference": "BRANZ (2023)", "Notes": "Overrideable"},
-        {"Order": 16, "Module": "Water Heating", "Variable / Indicator": "Water Heating COP", "Description & Role in Model": "Hot water system efficiency", "Data Type": "Assumption / User", "Selection Options & Default Values": "None=0; Electric cylinder=1.0; HPHW=2.0; Custom", "Source / Reference": "BRANZ (2023)", "Notes": "Simplified"},
-        {"Order": 17, "Module": "Lighting", "Variable / Indicator": "Lighting Energy", "Description & Role in Model": "Annual lighting electricity", "Data Type": "Calculated", "Selection Options & Default Values": "(Lights × W × h × 365) ÷ 1000", "Source / Reference": "Derived", "Notes": "Standard load"},
-        {"Order": 18, "Module": "Lighting", "Variable / Indicator": "Number of Lights", "Description & Role in Model": "Installed fixtures", "Data Type": "User Input", "Selection Options & Default Values": "User input", "Source / Reference": "User-defined", "Notes": "No default"},
-        {"Order": 19, "Module": "Lighting", "Variable / Indicator": "Wattage per Light", "Description & Role in Model": "Lamp power", "Data Type": "User Input", "Selection Options & Default Values": "User input (W)", "Source / Reference": "User-defined", "Notes": "LED–incandescent"},
-        {"Order": 20, "Module": "Lighting", "Variable / Indicator": "Daily Usage Hours", "Description & Role in Model": "Average daily use", "Data Type": "User Input", "Selection Options & Default Values": "User input (h/day)", "Source / Reference": "User-defined", "Notes": "Early-stage"},
-        {"Order": 21, "Module": "Water", "Variable / Indicator": "Total Water Use", "Description & Role in Model": "Annual indoor water use", "Data Type": "Calculated", "Selection Options & Default Values": "Sum of end uses", "Source / Reference": "Derived", "Notes": "m³/year"},
-        {"Order": 22, "Module": "Water", "Variable / Indicator": "Toilet Flush Volume", "Description & Role in Model": "Water per flush", "Data Type": "Assumption / User", "Selection Options & Default Values": "Single=9 L; Dual std=5 L; Dual eff=4 L; Custom", "Source / Reference": "BRANZ (2023)", "Notes": "NZ fixtures"},
-        {"Order": 23, "Module": "Water", "Variable / Indicator": "Shower Flow Rate", "Description & Role in Model": "Shower water flow", "Data Type": "Assumption / User", "Selection Options & Default Values": "Standard=9; Low-flow=7; Efficient=6; Custom", "Source / Reference": "BRANZ (2023)", "Notes": "L/min"},
-        {"Order": 24, "Module": "Water", "Variable / Indicator": "Tap Flow Rate", "Description & Role in Model": "Tap water flow", "Data Type": "Assumption / User", "Selection Options & Default Values": "Standard=8; Efficient=6; Very efficient=4; Custom", "Source / Reference": "BRANZ (2023)", "Notes": "L/min"},
-        {"Order": 25, "Module": "Water", "Variable / Indicator": "Laundry Water per Cycle", "Description & Role in Model": "Washing machine demand", "Data Type": "Assumption / User", "Selection Options & Default Values": "User input (L/cycle)", "Source / Reference": "BRANZ (2023)", "Notes": ""},
-        {"Order": 26, "Module": "Water", "Variable / Indicator": "Dishwasher Water per Cycle", "Description & Role in Model": "Dishwasher demand", "Data Type": "Assumption / User", "Selection Options & Default Values": "User input (L/cycle)", "Source / Reference": "BRANZ (2023)", "Notes": ""},
-        {"Order": 27, "Module": "Carbon", "Variable / Indicator": "Electricity Emissions", "Description & Role in Model": "CO₂ from electricity use", "Data Type": "Calculated", "Selection Options & Default Values": "Energy × factor", "Source / Reference": "MfE (2024)", "Notes": "2023 value"},
-        {"Order": 28, "Module": "Carbon", "Variable / Indicator": "Grid Emission Factor", "Description & Role in Model": "Carbon intensity of grid", "Data Type": "Constant", "Selection Options & Default Values": "0.0729 kgCO₂e/kWh", "Source / Reference": "MfE (2024)", "Notes": "Location-based"},
-        {"Order": 29, "Module": "Carbon", "Variable / Indicator": "Water Emissions", "Description & Role in Model": "CO₂ from water supply", "Data Type": "Calculated", "Selection Options & Default Values": "Water × factor", "Source / Reference": "MfE (2024)", "Notes": ""},
-        {"Order": 30, "Module": "Carbon", "Variable / Indicator": "Water Emission Factor", "Description & Role in Model": "Carbon per m³ water", "Data Type": "Constant", "Selection Options & Default Values": "0.0349 kgCO₂e/m³", "Source / Reference": "MfE (2024)", "Notes": ""},
-        {"Order": 31, "Module": "Cost (Opex)", "Variable / Indicator": "Electricity Tariff", "Description & Role in Model": "Retail electricity price", "Data Type": "Default / User", "Selection Options & Default Values": "Default=0.312 NZD/kWh", "Source / Reference": "Electricity Authority (2024)", "Notes": "Editable"},
-        {"Order": 32, "Module": "Cost (Opex)", "Variable / Indicator": "Water Tariff", "Description & Role in Model": "Residential water price", "Data Type": "Default / User", "Selection Options & Default Values": "Default=2.296 NZD/m³", "Source / Reference": "Auckland Council (2025)", "Notes": "Editable"},
-        {"Order": 33, "Module": "Cost (Opex)", "Variable / Indicator": "Annual Operating Cost", "Description & Role in Model": "Total operating cost", "Data Type": "Calculated", "Selection Options & Default Values": "Energy + water", "Source / Reference": "Derived", "Notes": ""},
-        {"Order": 34, "Module": "Cost (Capex)", "Variable / Indicator": "Floor Insulation Cost", "Description & Role in Model": "Installed floor insulation", "Data Type": "Assumption / User", "Selection Options & Default Values": "0 / 20 / 40 / 70 / 110 NZD/m²", "Source / Reference": "Market benchmark", "Notes": "Early-stage"},
-        {"Order": 35, "Module": "Cost (Capex)", "Variable / Indicator": "Roof Insulation Cost", "Description & Role in Model": "Installed roof insulation", "Data Type": "Assumption / User", "Selection Options & Default Values": "0 / 15 / 25 / 35 / 35 NZD/m²", "Source / Reference": "Market benchmark", "Notes": ""},
-        {"Order": 36, "Module": "Cost (Capex)", "Variable / Indicator": "Wall Insulation Cost", "Description & Role in Model": "Installed wall insulation", "Data Type": "Assumption / User", "Selection Options & Default Values": "0 / 25 / 45 / 75 / 120 NZD/m²", "Source / Reference": "Market benchmark", "Notes": ""},
-        {"Order": 37, "Module": "Cost (Capex)", "Variable / Indicator": "Window Cost", "Description & Role in Model": "Installed glazing", "Data Type": "Assumption / User", "Selection Options & Default Values": "300 / 600 / 950 / 1400 NZD/m²", "Source / Reference": "Market benchmark", "Notes": ""},
-        {"Order": 38, "Module": "Cost (Capex)", "Variable / Indicator": "Space Heating System Cost", "Description & Role in Model": "Installed heating system", "Data Type": "Assumption / User", "Selection Options & Default Values": "0 / 1500 / 4500 / 7000 NZD", "Source / Reference": "Market benchmark", "Notes": ""},
-        {"Order": 39, "Module": "Cost (Capex)", "Variable / Indicator": "Water Heating System Cost", "Description & Role in Model": "Installed DHW system", "Data Type": "Assumption / User", "Selection Options & Default Values": "0 / 3500 / 6500 NZD", "Source / Reference": "Market benchmark", "Notes": ""},
-        {"Order": 40, "Module": "Cost (Capex)", "Variable / Indicator": "Water Fixture Costs", "Description & Role in Model": "Toilet, shower, tap upgrades", "Data Type": "Assumption / User", "Selection Options & Default Values": "As specified", "Source / Reference": "Market benchmark", "Notes": ""},
-        {"Order": 41, "Module": "Metrics", "Variable / Indicator": "Annual Savings", "Description & Role in Model": "Opex reduction", "Data Type": "Calculated", "Selection Options & Default Values": "Baseline − option", "Source / Reference": "Derived", "Notes": ""},
-        {"Order": 42, "Module": "Metrics", "Variable / Indicator": "Payback Period", "Description & Role in Model": "Investment recovery time", "Data Type": "Calculated", "Selection Options & Default Values": "Capex ÷ savings", "Source / Reference": "Derived", "Notes": "Years"},
+    rows = [
+        [1,"Energy","Total Energy","Total annual household energy use","Calculated","Space heating + water heating + lighting","Derived","Primary output"],
+        [2,"Energy","Space Heating Energy","Electricity for space heating","Calculated","(H_total × HDD × 24 / 1000) ÷ COP","MBIE (2023)","Steady-state early-stage method"],
+        [3,"Energy","Heating Degree Days (HDD)","Climate severity (base 18 °C)","Lookup / User","Zone1=1200; Zone2=1400; Zone3=1800; Zone4=2200; Zone5=2400; Zone6=3000; Custom","InfraComfort (n.d.); MSD (2006)","City → climate zone"],
+        [4,"Energy","Heating System COP","Seasonal heating efficiency","Assumption / User","None=0; Electric resistance=1.0; Heat pump=2.5; High-efficiency HP=3.5; Custom","BRANZ (2023)","Typical NZ systems"],
+        [5,"Envelope","Floor R-value","Floor thermal resistance","Assumption / User","Uninsulated=0.6; Basic=1.5; Code=2.0; Good=2.8; Excellent=3.5; Custom","MBIE (2023); BRANZ (2023)","NZBC H1 aligned"],
+        [6,"Envelope","Roof R-value","Roof thermal resistance","Assumption / User","Uninsulated=0.5; Basic=3.0; Code=6.6; Good=8.0; Excellent=10.0; Custom","MBIE (2023); BRANZ (2023)","NZBC H1 aligned"],
+        [7,"Envelope","Wall R-value","Wall thermal resistance","Assumption / User","Uninsulated=0.5; Basic=1.5; Code=2.0; Good=3.0; Excellent=4.0; Custom","MBIE (2023); BRANZ (2023)","NZBC H1 aligned"],
+        [8,"Envelope","Window U-value","Glazing heat transfer","Assumption / User","Single=5.8; Double=3.0; Low-E=2.0; Triple=1.0; Custom","BRANZ (2023)","Typical NZ glazing"],
+        [9,"Envelope","Envelope Areas","Floor, roof, wall, window areas","User Input","User input (m²)","User-defined","Simplified geometry"],
+        [10,"Water Heating","Delivered Hot Water Energy","Energy to heat water","Calculated","(V × ΔT × Cp) ÷ 3600","Engineering standard","Physics-based"],
+        [11,"Water Heating","Heat Capacity (Cp)","Thermal constant","Constant","4.186 kJ/kg·°C","Engineering standard","Universal"],
+        [12,"Water Heating","Hot Water Fraction – Shower","Portion of shower water heated","Assumption / User","Default=0.9","BRANZ (2023)","Overrideable"],
+        [13,"Water Heating","Hot Water Fraction – Tap","Portion of tap water heated","Assumption / User","Default=0.4","BRANZ (2023)","Overrideable"],
+        [14,"Water Heating","Hot Water Fraction – Laundry","Portion of laundry water heated","Assumption / User","Default=0.5","BRANZ (2023)","Overrideable"],
+        [15,"Water Heating","Hot Water Fraction – Dishwasher","Portion of dishwasher water heated","Assumption / User","Default=1.0","BRANZ (2023)","Overrideable"],
+        [16,"Water Heating","Water Heating COP","Hot water system efficiency","Assumption / User","None=0; Electric cylinder=1.0; HPHW=2.0; Custom","BRANZ (2023)","Simplified"],
+        [17,"Lighting","Lighting Energy","Annual lighting electricity","Calculated","(Lights × W × h × 365) ÷ 1000","Derived","Standard load"],
+        [18,"Lighting","Number of Lights","Installed fixtures","User Input","User input","User-defined","No default required"],
+        [19,"Lighting","Wattage per Light","Lamp power","User Input","User input (W)","User-defined","LED–incandescent range"],
+        [20,"Lighting","Daily Usage Hours","Average daily use","User Input","User input (h/day)","User-defined","Early-stage"],
+        [21,"Water","Total Water Use","Annual indoor water use","Calculated","Sum of end uses","Derived","m³/year"],
+        [22,"Water","Toilet Flush Volume","Water per flush","Assumption / User","Single=9; Dual std=5; Dual eff=4; Custom","BRANZ (2023)","NZ fixtures"],
+        [23,"Water","Shower Flow Rate","Shower water flow","Assumption / User","Standard=9; Low-flow=7; Efficient=6; Custom","BRANZ (2023)","L/min"],
+        [24,"Water","Tap Flow Rate","Tap water flow","Assumption / User","Standard=8; Efficient=6; Very efficient=4; Custom","BRANZ (2023)","L/min"],
+        [25,"Water","Laundry Water per Cycle","Washing machine demand","Assumption / User","User input (L/cycle)","BRANZ (2023)","Appliance-dependent"],
+        [26,"Water","Dishwasher Water per Cycle","Dishwasher demand","Assumption / User","User input (L/cycle)","BRANZ (2023)","Appliance-dependent"],
+        [27,"Carbon","Electricity Emissions","CO₂ from electricity use","Calculated","Energy × factor","MfE (2024)","2023 value"],
+        [28,"Carbon","Grid Emission Factor","Carbon intensity of grid","Constant","0.0729 kgCO₂e/kWh","MfE (2024)","Location-based"],
+        [29,"Carbon","Water Emissions","CO₂ from water supply","Calculated","Water × factor","MfE (2024)",""],
+        [30,"Carbon","Water Emission Factor","Carbon per m³ water","Constant","0.0349 kgCO₂e/m³","MfE (2024)",""],
+        [31,"Cost (Opex)","Electricity Tariff","Retail electricity price","Default / User","Default=0.312 NZD/kWh","Electricity Authority (2024)","Editable"],
+        [32,"Cost (Opex)","Water Tariff","Residential water price","Default / User","Default=2.296 NZD/m³","Auckland Council (2025)","Editable"],
+        [33,"Cost (Opex)","Annual Operating Cost","Total operating cost","Calculated","Energy + water","Derived",""],
+        [34,"Cost (Capex)","Floor Insulation Cost","Installed floor insulation","Assumption / User","0/20/40/70/110 NZD/m²","Market benchmark","Early-stage"],
+        [35,"Cost (Capex)","Roof Insulation Cost","Installed roof insulation","Assumption / User","0/15/25/35/35 NZD/m²","Market benchmark",""],
+        [36,"Cost (Capex)","Wall Insulation Cost","Installed wall insulation","Assumption / User","0/25/45/75/120 NZD/m²","Market benchmark",""],
+        [37,"Cost (Capex)","Window Cost","Installed glazing","Assumption / User","300/600/950/1400 NZD/m²","Market benchmark",""],
+        [38,"Cost (Capex)","Space Heating System Cost","Installed heating system","Assumption / User","0/1500/4500/7000 NZD","Market benchmark",""],
+        [39,"Cost (Capex)","Water Heating System Cost","Installed DHW system","Assumption / User","0/3500/6500 NZD","Market benchmark",""],
+        [40,"Cost (Capex)","Water Fixture Costs","Toilet, shower, tap upgrades","Assumption / User","As specified","Market benchmark",""],
+        [41,"Metrics","Annual Savings","Opex reduction","Calculated","Baseline − option","Derived",""],
+        [42,"Metrics","Payback Period","Investment recovery time","Calculated","Capex ÷ savings","Derived","Years"],
     ]
-
-    df_sources = pd.DataFrame(sources_rows).sort_values("Order")
-    st.dataframe(df_sources, use_container_width=True, hide_index=True)
+    df = pd.DataFrame(rows, columns=[
+        "Order","Module","Variable / Indicator","Description & Role in Model",
+        "Data Type","Selection Options & Default Values","Source / Reference","Notes"
+    ])
+    st.dataframe(df, use_container_width=True, hide_index=True)
