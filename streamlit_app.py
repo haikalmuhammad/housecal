@@ -435,17 +435,6 @@ def select_with_placeholder(label: str, options: list, key: str, help_text: str 
     idx = full.index(current) if current in full else 0
     return st.selectbox(label, full, index=idx, key=key, help=help_text)
 
-def jump_to_results():
-    components.html(
-        """
-        <script>
-        const el = window.parent.document.querySelector('section.main');
-        if (el) { el.scrollTo({ top: 0, behavior: 'smooth' }); }
-        </script>
-        """,
-        height=0,
-    )
-
 # =============================================================================
 # RESOLVERS
 # =============================================================================
@@ -1376,6 +1365,70 @@ def render_data_sources_tab():
     st.dataframe(df, hide_index=True, use_container_width=True)
 
 # =============================================================================
+# KPI CARDS
+# =============================================================================
+def _delta_text(delta: float, is_money: bool, dec: int, unit: str):
+    arrow = direction_arrow(delta)
+    if is_money:
+        d_str = fmt_money(delta, 0)
+    else:
+        d_str = fmt_num(delta, dec)
+        if unit:
+            d_str = f"{d_str} {unit}"
+    return f"{arrow} {d_str}"
+
+def render_kpi_card(title: str, unit: str, b_val, o_val, dec: int = 1, is_money: bool = False):
+    delta = None if (b_val is None or o_val is None) else (o_val - b_val)
+
+    if is_money:
+        b_str = fmt_money(b_val, 0)
+        o_str = fmt_money(o_val, 0)
+        d_str = _delta_text(delta, True, dec, unit) if delta is not None else "—"
+    else:
+        b_str = f"{fmt_num(b_val, dec)} {unit}".strip()
+        o_str = f"{fmt_num(o_val, dec)} {unit}".strip()
+        d_str = _delta_text(delta, False, dec, unit) if delta is not None else "—"
+
+    st.markdown(
+        f"""
+        <div class="kpi-card">
+          <div class="kpi-title">{title} <span class="kpi-unit">({unit})</span></div>
+          <div class="kpi-row"><span class="kpi-label">Baseline</span><span class="kpi-value">{b_str}</span></div>
+          <div class="kpi-row"><span class="kpi-label">Option</span><span class="kpi-value">{o_str}</span></div>
+          <div class="kpi-row kpi-delta"><span class="kpi-label">Δ (Option − Base)</span><span class="kpi-value">{d_str}</span></div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+def render_payback_card(inc_capex: float, opex_savings: float):
+    if inc_capex <= 0:
+        pb = 0.0
+        note = "No additional capex (option ≤ baseline capex)."
+    elif opex_savings <= 0:
+        pb = None
+        note = "No payback (opex savings ≤ 0)."
+    else:
+        pb = inc_capex / opex_savings
+        note = ""
+
+    pb_str = f"{fmt_num(pb, 1)} years" if pb is not None else "—"
+
+    st.markdown(
+        f"""
+        <div class="kpi-card">
+          <div class="kpi-title">Simple payback <span class="kpi-unit">(years)</span></div>
+          <div class="kpi-row"><span class="kpi-label">Formula</span><span class="kpi-value">ΔCapex ÷ ΔOpex savings</span></div>
+          <div class="kpi-row"><span class="kpi-label">ΔCapex</span><span class="kpi-value">{fmt_money(inc_capex, 0)}</span></div>
+          <div class="kpi-row"><span class="kpi-label">Opex savings</span><span class="kpi-value">{fmt_money(opex_savings, 0)} /y</span></div>
+          <div class="kpi-row kpi-delta"><span class="kpi-label">Payback</span><span class="kpi-value">{pb_str}</span></div>
+          <div class="kpi-note">{note}</div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+# =============================================================================
 # APP START
 # =============================================================================
 init_defaults()
@@ -1399,6 +1452,56 @@ TAP_OPTS = list(LOOKUP["fixtures"]["tap"]["l_per_min"].keys()) + ["Custom"]
 st.title("NZ Housing Sustainability Calculator (Prototype)")
 st.caption("Early-stage comparison tool. Simplified, indicative, non-certification. Baseline → unlock Option → Compare. After activation, results update automatically as you edit inputs.")
 
+# Card styling
+st.markdown(
+    """
+    <style>
+      .kpi-card{
+        border: 1px solid rgba(49,51,63,0.18);
+        border-radius: 14px;
+        padding: 14px 14px 12px 14px;
+        margin: 0 0 12px 0;
+        background: rgba(255,255,255,0.02);
+      }
+      .kpi-title{
+        font-weight: 700;
+        font-size: 0.98rem;
+        margin-bottom: 8px;
+      }
+      .kpi-unit{
+        font-weight: 500;
+        font-size: 0.86rem;
+        opacity: 0.75;
+      }
+      .kpi-row{
+        display:flex;
+        justify-content:space-between;
+        gap:10px;
+        padding: 3px 0;
+        font-size: 0.92rem;
+      }
+      .kpi-label{
+        opacity: 0.78;
+      }
+      .kpi-value{
+        font-weight: 650;
+        text-align:right;
+      }
+      .kpi-delta{
+        margin-top: 6px;
+        padding-top: 8px;
+        border-top: 1px dashed rgba(49,51,63,0.22);
+      }
+      .kpi-note{
+        margin-top: 6px;
+        font-size: 0.85rem;
+        opacity: 0.75;
+      }
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
+
 tab_calc, tab_formulas, tab_sources = st.tabs(["Calculator", "Formulas", "Data sources"])
 
 # =============================================================================
@@ -1407,45 +1510,50 @@ tab_calc, tab_formulas, tab_sources = st.tabs(["Calculator", "Formulas", "Data s
 with tab_calc:
     left, right = st.columns([1.45, 1.0], gap="large")
 
+    # Make the whole inputs area scrollable so results stay visible on the right
     with left:
-        scenario_panel("b", "Baseline")
+        try:
+            inputs_box = st.container(height=820, border=True)
+        except TypeError:
+            inputs_box = st.container()
 
-        b_now = get_scenario("b")
-        missing_b = validate_scenario(b_now)
+        with inputs_box:
+            scenario_panel("b", "Baseline")
 
-        if not st.session_state["baseline_ready"]:
-            st.divider()
-            if missing_b:
-                st.info("Baseline incomplete. Missing: " + ", ".join(missing_b))
-            if st.button("Calculate Baseline", use_container_width=True, disabled=bool(missing_b)):
-                st.session_state["baseline_ready"] = True
-                st.session_state["option_unlocked"] = True
-                if not st.session_state.get("option_seeded", False):
-                    seed_option_from_baseline_once()
-                jump_to_results()
-                st.rerun()
+            b_now = get_scenario("b")
+            missing_b = validate_scenario(b_now)
 
-        if st.session_state.get("option_unlocked", False):
-            st.divider()
-            scenario_panel("o", "Option")
-
-            o_now = get_scenario("o")
-            missing_o = validate_scenario(o_now)
-
-            if not st.session_state.get("compare_ready", False):
+            if not st.session_state["baseline_ready"]:
                 st.divider()
-                if missing_o:
-                    st.info("Option incomplete. Missing: " + ", ".join(missing_o))
-                if st.button("Calculate & Compare", use_container_width=True, disabled=bool(missing_o)):
-                    st.session_state["compare_ready"] = True
-                    jump_to_results()
+                if missing_b:
+                    st.info("Baseline incomplete. Missing: " + ", ".join(missing_b))
+                if st.button("Calculate Baseline", use_container_width=True, disabled=bool(missing_b)):
+                    st.session_state["baseline_ready"] = True
+                    st.session_state["option_unlocked"] = True
+                    if not st.session_state.get("option_seeded", False):
+                        seed_option_from_baseline_once()
                     st.rerun()
+
+            if st.session_state.get("option_unlocked", False):
+                st.divider()
+                scenario_panel("o", "Option")
+
+                o_now = get_scenario("o")
+                missing_o = validate_scenario(o_now)
+
+                if not st.session_state.get("compare_ready", False):
+                    st.divider()
+                    if missing_o:
+                        st.info("Option incomplete. Missing: " + ", ".join(missing_o))
+                    if st.button("Calculate & Compare", use_container_width=True, disabled=bool(missing_o)):
+                        st.session_state["compare_ready"] = True
+                        st.rerun()
 
     with right:
         st.subheader("Results")
 
         try:
-            results_box = st.container(height=740, border=True)
+            results_box = st.container(height=820, border=True)
         except TypeError:
             results_box = st.container()
 
@@ -1461,22 +1569,8 @@ with tab_calc:
                     b_res = calculate_scenario(b_now, get_coeffs("b"))
                     st.session_state["baseline_results"] = b_res
 
-                    st.markdown("### Baseline KPI summary")
-                    kpi_base = pd.DataFrame([
-                        {"Metric": "Total Energy (kWh/y)", "Value": b_res["totalElectricity_kwh_y"], "Unit": "kWh/y", "dec": 1},
-                        {"Metric": "Energy Intensity (kWh/m²/y)", "Value": b_res["energyIntensity_kwh_m2_y"], "Unit": "kWh/m²/y", "dec": 2},
-                        {"Metric": "Water Consumption (m³/y)", "Value": b_res["waterConsumption"]["V_total_m3_y"], "Unit": "m³/y", "dec": 2},
-                        {"Metric": "Operational Carbon (kgCO₂e/y)", "Value": b_res["carbon"]["CO2_total_kg_y"], "Unit": "kgCO₂e/y", "dec": 1},
-                        {"Metric": "Annual Opex (NZD/y)", "Value": b_res["opex"]["opex_total_nzd_y"], "Unit": "NZD/y", "dec": 0},
-                        {"Metric": "Total Capex (NZD)", "Value": b_res["capex"]["capex_total_nzd"], "Unit": "NZD", "dec": 0},
-                    ])
-                    kpi_base["Value"] = kpi_base.apply(lambda r: fmt_num(r["Value"], int(r["dec"])), axis=1)
-                    st.dataframe(kpi_base[["Metric", "Value", "Unit"]], hide_index=True, use_container_width=True)
-
-                    st.divider()
-
                     if not st.session_state.get("compare_ready", False):
-                        st.info("Option is unlocked. Edit Option inputs on the left, then click **Calculate & Compare** once. After that, results will update live.")
+                        st.info("Option is unlocked. Edit Option inputs on the left, then click **Calculate & Compare** once. After that, results update live.")
                     else:
                         o_now = get_scenario("o")
                         missing_o = validate_scenario(o_now)
@@ -1486,40 +1580,61 @@ with tab_calc:
                             o_res = calculate_scenario(o_now, get_coeffs("o"))
                             st.session_state["option_results"] = o_res
 
-                            st.markdown("### Comparison KPIs")
-                            rows = [
-                                ("Total Energy (kWh/y)", b_res["totalElectricity_kwh_y"], o_res["totalElectricity_kwh_y"], 1, "kWh/y"),
-                                ("Energy Intensity (kWh/m²/y)", b_res["energyIntensity_kwh_m2_y"], o_res["energyIntensity_kwh_m2_y"], 2, "kWh/m²/y"),
-                                ("Water (m³/y)", b_res["waterConsumption"]["V_total_m3_y"], o_res["waterConsumption"]["V_total_m3_y"], 2, "m³/y"),
-                                ("Carbon (kgCO₂e/y)", b_res["carbon"]["CO2_total_kg_y"], o_res["carbon"]["CO2_total_kg_y"], 1, "kgCO₂e/y"),
-                                ("Opex (NZD/y)", b_res["opex"]["opex_total_nzd_y"], o_res["opex"]["opex_total_nzd_y"], 0, "NZD/y"),
-                                ("Capex total (NZD)", b_res["capex"]["capex_total_nzd"], o_res["capex"]["capex_total_nzd"], 0, "NZD"),
-                            ]
-                            out = []
-                            for name, b, o, dec, unit in rows:
-                                d = o - b
-                                out.append({
-                                    "Metric": name,
-                                    "Baseline": fmt_num(b, dec),
-                                    "Option": fmt_num(o, dec),
-                                    "Δ (Option−Base)": fmt_num(d, dec),
-                                    "Dir": direction_arrow(d),
-                                    "Unit": unit
-                                })
-                            st.dataframe(pd.DataFrame(out), hide_index=True, use_container_width=True)
+                            # --- KPI Cards (3 rows x 2 columns) ---
+                            r1c1, r1c2 = st.columns(2, gap="small")
+                            with r1c1:
+                                render_kpi_card(
+                                    "Total energy use",
+                                    "kWh/y",
+                                    b_res["totalElectricity_kwh_y"],
+                                    o_res["totalElectricity_kwh_y"],
+                                    dec=1,
+                                    is_money=False,
+                                )
+                            with r1c2:
+                                render_kpi_card(
+                                    "Total water use",
+                                    "m³/y",
+                                    b_res["waterConsumption"]["V_total_m3_y"],
+                                    o_res["waterConsumption"]["V_total_m3_y"],
+                                    dec=2,
+                                    is_money=False,
+                                )
 
-                            inc_capex = o_res["capex"]["capex_total_nzd"] - b_res["capex"]["capex_total_nzd"]
-                            savings = b_res["opex"]["opex_total_nzd_y"] - o_res["opex"]["opex_total_nzd_y"]
-                            if inc_capex <= 0:
-                                pb = 0.0
-                                pb_note = "No additional capex (option ≤ baseline capex)."
-                            elif savings <= 0:
-                                pb = None
-                                pb_note = "No payback (opex savings ≤ 0)."
-                            else:
-                                pb = inc_capex / savings
-                                pb_note = ""
-                            st.caption(f"Simple payback: **{fmt_num(pb, 1) if pb is not None else '—'} years** {('— ' + pb_note) if pb_note else ''}")
+                            r2c1, r2c2 = st.columns(2, gap="small")
+                            with r2c1:
+                                render_kpi_card(
+                                    "Operational carbon",
+                                    "kgCO₂e/y",
+                                    b_res["carbon"]["CO2_total_kg_y"],
+                                    o_res["carbon"]["CO2_total_kg_y"],
+                                    dec=1,
+                                    is_money=False,
+                                )
+                            with r2c2:
+                                render_kpi_card(
+                                    "Operational expenditure",
+                                    "NZD/y",
+                                    b_res["opex"]["opex_total_nzd_y"],
+                                    o_res["opex"]["opex_total_nzd_y"],
+                                    dec=0,
+                                    is_money=True,
+                                )
+
+                            r3c1, r3c2 = st.columns(2, gap="small")
+                            with r3c1:
+                                render_kpi_card(
+                                    "Capital expenditure",
+                                    "NZD",
+                                    b_res["capex"]["capex_total_nzd"],
+                                    o_res["capex"]["capex_total_nzd"],
+                                    dec=0,
+                                    is_money=True,
+                                )
+                            with r3c2:
+                                inc_capex = o_res["capex"]["capex_total_nzd"] - b_res["capex"]["capex_total_nzd"]
+                                savings = b_res["opex"]["opex_total_nzd_y"] - o_res["opex"]["opex_total_nzd_y"]
+                                render_payback_card(inc_capex, savings)
 
                             st.divider()
                             st.markdown("### Charts (all vertical bars)")
