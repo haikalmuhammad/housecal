@@ -2,6 +2,7 @@
 import copy
 import json
 import math
+import inspect
 from datetime import datetime
 
 import pandas as pd
@@ -14,88 +15,40 @@ import plotly.graph_objects as go
 st.set_page_config(page_title="NZ Housing Sustainability Calculator (Prototype)", layout="wide")
 PLACEHOLDER = "— Select —"
 
-# Build stamp (helps you verify the deployed code is the one you expect)
-st.caption("BUILD: 2025-12-25 vFINAL (refactor+fix)")
+st.caption("BUILD: 2025-12-26 vMETRICCARDS (no CSS KPI)")
 
 # =============================================================================
-# MINIMAL CSS (KPI cards + sticky bottom action bar + small status pills)
+# VERSION-SAFE UI HELPERS
 # =============================================================================
-def inject_min_css():
-    st.markdown(
-        """
-        <style>
-        /* KPI Cards */
-        .kpi-card{
-          border: 1px solid rgba(49, 51, 63, 0.18);
-          border-radius: 12px;
-          padding: 12px 12px;
-          background: rgba(255,255,255,0.02);
-          margin-bottom: 10px;
-        }
-        .kpi-title{
-          font-weight: 800;
-          font-size: 0.95rem;
-          margin-bottom: 2px;
-          line-height: 1.2;
-        }
-        .kpi-sub{
-          font-weight: 600;
-          opacity: 0.70;
-          font-size: 0.82rem;
-          margin-bottom: 8px;
-        }
-        .kpi-row{
-          display:flex;
-          justify-content: space-between;
-          gap: 12px;
-          padding: 2px 0;
-          font-size: 0.92rem;
-        }
-        .kpi-label{ opacity: 0.75; }
-        .kpi-val{ font-weight: 800; }
-        .kpi-note{ opacity: 0.70; font-size: 0.82rem; margin-top: 6px; }
+def _supports_kw(fn, kw: str) -> bool:
+    try:
+        return kw in inspect.signature(fn).parameters
+    except Exception:
+        return False
 
-        .sec-h{
-          font-weight: 900;
-          font-size: 1.05rem;
-          margin: 2px 0 8px 0;
-        }
+SUPPORTS_METRIC_BORDER = _supports_kw(st.metric, "border")
+SUPPORTS_CONTAINER_BORDER = _supports_kw(st.container, "border")
 
-        /* Sticky bottom action bar (left column only) */
-        .fixed-bar{
-          position: sticky;
-          bottom: 0;
-          z-index: 999;
-          background: var(--background-color, white);
-          padding-top: 8px;
-          padding-bottom: 8px;
-          border-top: 1px solid rgba(49, 51, 63, 0.18);
-        }
+def container_box(height: int | None = None, border: bool = True):
+    """Version-safe bordered container."""
+    if SUPPORTS_CONTAINER_BORDER:
+        if height is None:
+            return st.container(border=border)
+        return st.container(height=height, border=border)
+    # fallback
+    return st.container(height=height) if height is not None else st.container()
 
-        /* Small status pills */
-        .pill{
-          display: inline-flex;
-          align-items: center;
-          gap: 6px;
-          padding: 2px 8px;
-          border-radius: 999px;
-          border: 1px solid rgba(49, 51, 63, 0.18);
-          font-size: 0.78rem;
-          font-weight: 700;
-          opacity: 0.92;
-        }
-        .pill-ok{ }
-        .pill-bad{ opacity: 0.72; }
-        </style>
-        """,
-        unsafe_allow_html=True,
-    )
-
-
-inject_min_css()
+def metric_card(label: str, value: str, delta: str | None = None, delta_color: str = "normal", help_text: str | None = None):
+    """Version-safe metric with optional border."""
+    kwargs = dict(label=label, value=value, delta=delta, delta_color=delta_color, help=help_text)
+    kwargs = {k: v for k, v in kwargs.items() if v is not None}
+    if SUPPORTS_METRIC_BORDER:
+        st.metric(**kwargs, border=True)
+    else:
+        st.metric(**kwargs)
 
 # =============================================================================
-# HELPERS
+# HELPERS (text + formatting)
 # =============================================================================
 def help_default_source(
     what: str,
@@ -116,6 +69,38 @@ def help_default_source(
         parts.append(notes)
     return " ".join(parts)
 
+def fmt_num(x: float | None, decimals: int = 1) -> str:
+    if x is None:
+        return "—"
+    return f"{x:,.{decimals}f}"
+
+def fmt_money_nzd(x: float | None, decimals: int = 0) -> str:
+    if x is None:
+        return "—"
+    return f"{x:,.{decimals}f}"
+
+def _yn_to_bool(v: str):
+    if v == "Yes":
+        return True
+    if v == "No":
+        return False
+    return None
+
+def _clamp(x: float, lo: float, hi: float) -> float:
+    return max(lo, min(hi, x))
+
+def _bucket_from_label(label: str) -> str:
+    for b in ["Uninsulated", "Basic", "Code minimum", "Good", "Excellent"]:
+        if label == b:
+            return b
+    return "Uninsulated"
+
+def select_with_placeholder(label: str, options: list, key: str, help_text: str | None = None):
+    full = [PLACEHOLDER] + options
+    current = st.session_state.get(key, PLACEHOLDER)
+    idx = full.index(current) if current in full else 0
+    return st.selectbox(label, full, index=idx, key=key, help=help_text)
+
 # =============================================================================
 # LOOKUP TABLES (Single Source of Truth)
 # =============================================================================
@@ -128,8 +113,6 @@ LOOKUP = {
         "electricity_tariff_nzd_per_kwh_default": 0.312,
         # Source: Auckland Council (2025) — representative indoor residential tariff (default)
         "water_tariff_nzd_per_m3_default": 2.296,
-        # Geometry
-        "ceiling_height_m_default": 2.4,
         # Thermo for water heating
         "cp_kj_per_kgC": 4.186,
     },
@@ -404,55 +387,6 @@ def build_help(LK):
 HELP = build_help(LOOKUP)
 
 # =============================================================================
-# UTIL
-# =============================================================================
-def fmt_num(x: float, decimals: int = 1) -> str:
-    if x is None:
-        return "—"
-    return f"{x:,.{decimals}f}"
-
-def fmt_money(x: float, decimals: int = 0) -> str:
-    if x is None:
-        return "—"
-    return f"${x:,.{decimals}f}"
-
-def direction_arrow(delta: float) -> str:
-    if delta is None:
-        return "—"
-    if delta < 0:
-        return "▼"
-    if delta > 0:
-        return "▲"
-    return "—"
-
-def _yn_to_bool(v: str):
-    if v == "Yes":
-        return True
-    if v == "No":
-        return False
-    return None
-
-def _clamp(x: float, lo: float, hi: float) -> float:
-    return max(lo, min(hi, x))
-
-def _bucket_from_label(label: str) -> str:
-    for b in ["Uninsulated", "Basic", "Code minimum", "Good", "Excellent"]:
-        if label == b:
-            return b
-    return "Uninsulated"
-
-def select_with_placeholder(label: str, options: list, key: str, help_text: str | None = None):
-    full = [PLACEHOLDER] + options
-    current = st.session_state.get(key, PLACEHOLDER)
-    idx = full.index(current) if current in full else 0
-    return st.selectbox(label, full, index=idx, key=key, help=help_text)
-
-def pill(ok: bool, ok_text="✓ complete", bad_text="• incomplete") -> str:
-    klass = "pill pill-ok" if ok else "pill pill-bad"
-    txt = ok_text if ok else bad_text
-    return f'<span class="{klass}">{txt}</span>'
-
-# =============================================================================
 # RESOLVERS
 # =============================================================================
 def resolve_from_lookup_or_custom(label: str, custom_key: str, lookup_dict: dict) -> float | None:
@@ -649,17 +583,6 @@ def compute_capex_total(s: dict) -> dict:
     return {
         "capex_total_nzd": total,
         "breakdown_nzd": {"Envelope": envelope, "Systems": systems, "Fixtures": fixtures},
-        "detail_breakdown_nzd": {
-            "Roof insulation": cap["roof_nzd_per_m2"] * areas["roof"],
-            "Wall insulation": cap["wall_nzd_per_m2"] * areas["wall"],
-            "Floor insulation": cap["floor_nzd_per_m2"] * areas["floor"],
-            "Windows": cap["window_nzd_per_m2_window"] * areas["window"],
-            "Space heating system": cap["space_heating_install_nzd"],
-            "Water heating system": cap["water_heating_install_nzd"],
-            "Toilet install": cap["toilet_install_nzd"],
-            "Shower install": cap["shower_install_nzd"],
-            "Tap install": cap["tap_install_nzd"],
-        }
     }
 
 def calculate_scenario(s: dict, coeffs: dict) -> dict:
@@ -687,7 +610,7 @@ def calculate_scenario(s: dict, coeffs: dict) -> dict:
     }
 
 # =============================================================================
-# STATE + FLOW (IMPORTANT: prefixes remain b/o; only labels change)
+# STATE + FLOW
 # =============================================================================
 COPY_KEYS = [
     "closestCity","use_custom_hdd","hdd_override_value",
@@ -952,38 +875,7 @@ def validate_scenario(s: dict) -> list:
     return missing
 
 # =============================================================================
-# SECTION COMPLETION (for UX status)
-# =============================================================================
-def section_completion(prefix: str) -> dict:
-    # Core climate + lighting
-    core_ok = (
-        st.session_state.get(f"{prefix}_closestCity", PLACEHOLDER) != PLACEHOLDER
-        and (resolve_hdd(prefix) is not None)
-        and (st.session_state.get(f"{prefix}_floorArea") is not None)
-        and (st.session_state.get(f"{prefix}_ceilingHeight") is not None)
-        and (st.session_state.get(f"{prefix}_householdSize") is not None)
-        and (st.session_state.get(f"{prefix}_windowArea") is not None)
-        and (st.session_state.get(f"{prefix}_light_n") is not None)
-        and (st.session_state.get(f"{prefix}_light_watts") is not None)
-        and (st.session_state.get(f"{prefix}_light_hours") is not None)
-    )
-
-    # Envelope + systems + water (required)
-    req_labels = [
-        f"{prefix}_roofRLabel", f"{prefix}_wallRLabel", f"{prefix}_floorRLabel", f"{prefix}_windowULabel",
-        f"{prefix}_spaceHeatingSystem", f"{prefix}_waterHeatingSystem",
-        f"{prefix}_toiletType", f"{prefix}_showerType", f"{prefix}_tapType",
-        f"{prefix}_wash_has", f"{prefix}_dish_has",
-    ]
-    env_ok = all(st.session_state.get(k, PLACEHOLDER) not in (PLACEHOLDER, None) for k in req_labels)
-
-    # Optional block (never blocks calculate)
-    opt_ok = True  # always considered optional/OK
-
-    return {"core": core_ok, "env": env_ok, "opt": opt_ok}
-
-# =============================================================================
-# UI captions (performance + capex)
+# INPUT PANELS
 # =============================================================================
 def show_city_caption(prefix: str):
     city = st.session_state.get(f"{prefix}_closestCity", PLACEHOLDER)
@@ -994,45 +886,9 @@ def show_city_caption(prefix: str):
         hdd = LOOKUP["climate"]["hdd_by_zone_base18"][z]
         st.caption(f"Climate zone: **{z}** · Default HDD (base 18°C): **{hdd:g}**")
 
-def show_envelope_caption(element: str, label: str):
-    if label in (PLACEHOLDER, None, "Custom"):
-        return
-    if element in ("roof", "wall", "floor"):
-        r = LOOKUP["thermal_envelope"][f"{element}R_m2K_per_W"][label]
-        bucket = _bucket_from_label(label)
-        cost = LOOKUP["thermal_envelope"]["capex_per_m2"][element][bucket]
-        st.caption(f"Performance: **R={r:g} m²K/W** · Capex: **{fmt_money(cost)} /m²**")
-    if element == "window":
-        u = LOOKUP["thermal_envelope"]["windowU_W_per_m2K"][label]
-        cost = LOOKUP["thermal_envelope"]["capex_per_m2"]["window"][label]
-        st.caption(f"Performance: **U={u:g} W/m²K** · Capex: **{fmt_money(cost)} /m² window**")
-
-def show_system_caption(sys_block: str, label: str):
-    if label in (PLACEHOLDER, None, "Custom"):
-        return
-    cop = LOOKUP["systems"][sys_block]["cop"][label]
-    cost = LOOKUP["systems"][sys_block]["install_cost_nzd"][label]
-    st.caption(f"Performance: **COP={cop:g}** · Install capex: **{fmt_money(cost)}**")
-
-def show_fixture_caption(kind: str, label: str):
-    if label in (PLACEHOLDER, None, "Custom"):
-        return
-    if kind == "toilet":
-        v = LOOKUP["fixtures"]["toilet"]["l_per_flush"][label]
-        c = LOOKUP["fixtures"]["toilet"]["install_cost_nzd"][label]
-        st.caption(f"Water: **{v:g} L/flush** · Install capex: **{fmt_money(c)}**")
-    else:
-        v = LOOKUP["fixtures"][kind]["l_per_min"][label]
-        c = LOOKUP["fixtures"][kind]["install_cost_nzd"][label]
-        st.caption(f"Water: **{v:g} L/min** · Install capex: **{fmt_money(c)}**")
-
-# =============================================================================
-# INPUT PANELS
-# =============================================================================
 def scenario_panel(prefix: str, title: str):
     st.subheader(title)
 
-    # Button MUST use on_click to avoid StreamlitValueAssignmentNotAllowedError
     st.button(
         f"Use Code Minimum ({title})",
         key=f"{prefix}_btn_code_min",
@@ -1041,19 +897,12 @@ def scenario_panel(prefix: str, title: str):
         args=(prefix,),
     )
 
-    comp = section_completion(prefix)
-    st.markdown(
-        f"{pill(comp['core'])} &nbsp; {pill(comp['env'])} &nbsp; <span class='pill'>Optional</span>",
-        unsafe_allow_html=True,
-    )
-
     # 1) Core + Climate + Lighting
-    core_label = f"Core climate + lighting ({'✓ complete' if comp['core'] else '• incomplete'})"
-    with st.expander(core_label, expanded=True):
+    with st.expander("Core climate + lighting", expanded=True):
         c1, c2 = st.columns(2, gap="large")
 
         with c1:
-            st.markdown('<div class="sec-h">Building info</div>', unsafe_allow_html=True)
+            st.markdown("**Building info**")
             select_with_placeholder("Closest city", CITIES, key=f"{prefix}_closestCity", help_text=HELP["closest_city"])
             show_city_caption(prefix)
 
@@ -1065,7 +914,6 @@ def scenario_panel(prefix: str, title: str):
                     key=f"{prefix}_hdd_override_value",
                     help=HELP["hdd_value"],
                 )
-                st.caption(f"Using custom HDD: **{float(st.session_state[f'{prefix}_hdd_override_value']):g}**")
 
             st.number_input("Floor area (m²)", min_value=20.0, max_value=500.0, step=5.0, key=f"{prefix}_floorArea", help=HELP["floor_area"])
             st.number_input("Ceiling height (m)", min_value=2.0, max_value=4.0, step=0.1, key=f"{prefix}_ceilingHeight", help=HELP["ceiling_height"])
@@ -1073,105 +921,94 @@ def scenario_panel(prefix: str, title: str):
             st.number_input("Total window area (m²)", min_value=0.0, max_value=200.0, step=5.0, key=f"{prefix}_windowArea", help=HELP["window_area"])
 
         with c2:
-            st.markdown('<div class="sec-h">Lighting</div>', unsafe_allow_html=True)
+            st.markdown("**Lighting**")
             st.number_input("Number of lights", min_value=0, max_value=200, step=1, key=f"{prefix}_light_n", help=HELP["light_n"])
             st.number_input("Watts per light", min_value=0.0, max_value=200.0, step=1.0, key=f"{prefix}_light_watts", help=HELP["light_watts"])
             st.number_input("Lighting hours/day", min_value=0.0, max_value=24.0, step=0.5, key=f"{prefix}_light_hours", help=HELP["light_hours"])
             st.caption("Formula: count × watts × hours/day × 365 ÷ 1000")
 
     # 2) Envelope + Systems + Water
-    env_label = f"Envelope + systems + water ({'✓ complete' if comp['env'] else '• incomplete'})"
-    with st.expander(env_label, expanded=False):
+    with st.expander("Envelope + systems + water", expanded=False):
         ec1, ec2 = st.columns(2, gap="large")
 
         with ec1:
-            st.markdown('<div class="sec-h">Thermal envelope</div>', unsafe_allow_html=True)
-
+            st.markdown("**Thermal envelope**")
             select_with_placeholder("Roof insulation", ROOF_OPTS, key=f"{prefix}_roofRLabel", help_text=HELP["r_value"])
-            show_envelope_caption("roof", st.session_state[f"{prefix}_roofRLabel"])
             if st.session_state[f"{prefix}_roofRLabel"] == "Custom":
-                st.number_input("Roof R-value (m²K/W)", min_value=0.1, max_value=20.0, step=0.1, key=f"{prefix}_roofR_custom", help=HELP["r_value"])
-                st.number_input("Roof capex (NZD/m² roof)", min_value=0.0, max_value=2000.0, step=10.0, key=f"{prefix}_roofCost_custom")
+                st.number_input("Roof R-value (m²K/W)", 0.1, 20.0, 0.1, key=f"{prefix}_roofR_custom", help=HELP["r_value"])
+                st.number_input("Roof capex (NZD/m² roof)", 0.0, 2000.0, 10.0, key=f"{prefix}_roofCost_custom")
 
             select_with_placeholder("Wall insulation", WALL_OPTS, key=f"{prefix}_wallRLabel", help_text=HELP["r_value"])
-            show_envelope_caption("wall", st.session_state[f"{prefix}_wallRLabel"])
             if st.session_state[f"{prefix}_wallRLabel"] == "Custom":
-                st.number_input("Wall R-value (m²K/W)", min_value=0.1, max_value=20.0, step=0.1, key=f"{prefix}_wallR_custom", help=HELP["r_value"])
-                st.number_input("Wall capex (NZD/m² wall)", min_value=0.0, max_value=2000.0, step=10.0, key=f"{prefix}_wallCost_custom")
+                st.number_input("Wall R-value (m²K/W)", 0.1, 20.0, 0.1, key=f"{prefix}_wallR_custom", help=HELP["r_value"])
+                st.number_input("Wall capex (NZD/m² wall)", 0.0, 2000.0, 10.0, key=f"{prefix}_wallCost_custom")
 
             select_with_placeholder("Floor insulation", FLOOR_OPTS, key=f"{prefix}_floorRLabel", help_text=HELP["r_value"])
-            show_envelope_caption("floor", st.session_state[f"{prefix}_floorRLabel"])
             if st.session_state[f"{prefix}_floorRLabel"] == "Custom":
-                st.number_input("Floor R-value (m²K/W)", min_value=0.1, max_value=20.0, step=0.1, key=f"{prefix}_floorR_custom", help=HELP["r_value"])
-                st.number_input("Floor capex (NZD/m² floor)", min_value=0.0, max_value=2000.0, step=10.0, key=f"{prefix}_floorCost_custom")
+                st.number_input("Floor R-value (m²K/W)", 0.1, 20.0, 0.1, key=f"{prefix}_floorR_custom", help=HELP["r_value"])
+                st.number_input("Floor capex (NZD/m² floor)", 0.0, 2000.0, 10.0, key=f"{prefix}_floorCost_custom")
 
             select_with_placeholder("Window type", WIN_OPTS, key=f"{prefix}_windowULabel", help_text=HELP["u_value"])
-            show_envelope_caption("window", st.session_state[f"{prefix}_windowULabel"])
             if st.session_state[f"{prefix}_windowULabel"] == "Custom":
-                st.number_input("Window U-value (W/m²K)", min_value=0.1, max_value=10.0, step=0.1, key=f"{prefix}_windowU_custom", help=HELP["u_value"])
-                st.number_input("Windows capex (NZD/m² window)", min_value=0.0, max_value=5000.0, step=25.0, key=f"{prefix}_windowCost_custom")
+                st.number_input("Window U-value (W/m²K)", 0.1, 10.0, 0.1, key=f"{prefix}_windowU_custom", help=HELP["u_value"])
+                st.number_input("Windows capex (NZD/m² window)", 0.0, 5000.0, 25.0, key=f"{prefix}_windowCost_custom")
 
         with ec2:
-            st.markdown('<div class="sec-h">Systems</div>', unsafe_allow_html=True)
-
+            st.markdown("**Systems**")
             select_with_placeholder("Space heating system", SPACE_SYS_OPTS, key=f"{prefix}_spaceHeatingSystem", help_text=HELP["cop"])
-            show_system_caption("space_heating", st.session_state[f"{prefix}_spaceHeatingSystem"])
             if st.session_state[f"{prefix}_spaceHeatingSystem"] == "Custom":
-                st.number_input("Space heating COP", min_value=0.0, max_value=10.0, step=0.1, key=f"{prefix}_spaceCOP_custom", help=HELP["cop"])
-                st.number_input("Space heating install capex (NZD)", min_value=0.0, max_value=50000.0, step=100.0, key=f"{prefix}_spaceInstall_custom")
+                st.number_input("Space heating COP", 0.0, 10.0, 0.1, key=f"{prefix}_spaceCOP_custom", help=HELP["cop"])
+                st.number_input("Space heating install capex (NZD)", 0.0, 50000.0, 100.0, key=f"{prefix}_spaceInstall_custom")
 
             select_with_placeholder("Water heating system", WATER_SYS_OPTS, key=f"{prefix}_waterHeatingSystem", help_text=HELP["cop"])
-            show_system_caption("water_heating", st.session_state[f"{prefix}_waterHeatingSystem"])
             if st.session_state[f"{prefix}_waterHeatingSystem"] == "Custom":
-                st.number_input("Water heating COP", min_value=0.0, max_value=10.0, step=0.1, key=f"{prefix}_waterCOP_custom", help=HELP["cop"])
-                st.number_input("Water heating install capex (NZD)", min_value=0.0, max_value=50000.0, step=100.0, key=f"{prefix}_waterInstall_custom")
+                st.number_input("Water heating COP", 0.0, 10.0, 0.1, key=f"{prefix}_waterCOP_custom", help=HELP["cop"])
+                st.number_input("Water heating install capex (NZD)", 0.0, 50000.0, 100.0, key=f"{prefix}_waterInstall_custom")
 
-            st.markdown('<div class="sec-h" style="margin-top:12px;">Water fixtures + appliances</div>', unsafe_allow_html=True)
+            st.divider()
+            st.markdown("**Water fixtures + appliances**")
 
             select_with_placeholder("Toilet type", TOILET_OPTS, key=f"{prefix}_toiletType", help_text=HELP["fixture"])
-            show_fixture_caption("toilet", st.session_state[f"{prefix}_toiletType"])
             if st.session_state[f"{prefix}_toiletType"] == "Custom":
-                st.number_input("Toilet litres/flush", min_value=1.0, max_value=20.0, step=0.5, key=f"{prefix}_toilet_value_custom", help=HELP["fixture"])
-                st.number_input("Toilet install capex (NZD)", min_value=0.0, max_value=20000.0, step=50.0, key=f"{prefix}_toilet_cost_custom")
+                st.number_input("Toilet litres/flush", 1.0, 20.0, 0.5, key=f"{prefix}_toilet_value_custom", help=HELP["fixture"])
+                st.number_input("Toilet install capex (NZD)", 0.0, 20000.0, 50.0, key=f"{prefix}_toilet_cost_custom")
 
             select_with_placeholder("Shower type", SHOWER_OPTS, key=f"{prefix}_showerType", help_text=HELP["fixture"])
-            show_fixture_caption("shower", st.session_state[f"{prefix}_showerType"])
             if st.session_state[f"{prefix}_showerType"] == "Custom":
-                st.number_input("Shower flow (L/min)", min_value=1.0, max_value=30.0, step=0.5, key=f"{prefix}_shower_value_custom", help=HELP["fixture"])
-                st.number_input("Shower install capex (NZD)", min_value=0.0, max_value=20000.0, step=50.0, key=f"{prefix}_shower_cost_custom")
+                st.number_input("Shower flow (L/min)", 1.0, 30.0, 0.5, key=f"{prefix}_shower_value_custom", help=HELP["fixture"])
+                st.number_input("Shower install capex (NZD)", 0.0, 20000.0, 50.0, key=f"{prefix}_shower_cost_custom")
 
             select_with_placeholder("Tap type", TAP_OPTS, key=f"{prefix}_tapType", help_text=HELP["fixture"])
-            show_fixture_caption("tap", st.session_state[f"{prefix}_tapType"])
             if st.session_state[f"{prefix}_tapType"] == "Custom":
-                st.number_input("Tap flow (L/min)", min_value=1.0, max_value=30.0, step=0.5, key=f"{prefix}_tap_value_custom", help=HELP["fixture"])
-                st.number_input("Tap install capex (NZD)", min_value=0.0, max_value=20000.0, step=50.0, key=f"{prefix}_tap_cost_custom")
+                st.number_input("Tap flow (L/min)", 1.0, 30.0, 0.5, key=f"{prefix}_tap_value_custom", help=HELP["fixture"])
+                st.number_input("Tap install capex (NZD)", 0.0, 20000.0, 50.0, key=f"{prefix}_tap_cost_custom")
 
             st.divider()
             st.selectbox("Has washing machine?", [PLACEHOLDER, "Yes", "No"], key=f"{prefix}_wash_has", help=HELP["wash_has"])
             if st.session_state[f"{prefix}_wash_has"] == "Yes":
-                st.number_input("Cycles/week (washing)", min_value=0.0, max_value=50.0, step=1.0, key=f"{prefix}_wash_cycles")
-                st.number_input("L/cycle (washing)", min_value=0.0, max_value=300.0, step=5.0, key=f"{prefix}_wash_L")
+                st.number_input("Cycles/week (washing)", 0.0, 50.0, 1.0, key=f"{prefix}_wash_cycles")
+                st.number_input("L/cycle (washing)", 0.0, 300.0, 5.0, key=f"{prefix}_wash_L")
 
             st.selectbox("Has dishwasher?", [PLACEHOLDER, "Yes", "No"], key=f"{prefix}_dish_has", help=HELP["dish_has"])
             if st.session_state[f"{prefix}_dish_has"] == "Yes":
-                st.number_input("Cycles/week (dishwasher)", min_value=0.0, max_value=50.0, step=1.0, key=f"{prefix}_dish_cycles")
-                st.number_input("L/cycle (dishwasher)", min_value=0.0, max_value=100.0, step=1.0, key=f"{prefix}_dish_L")
+                st.number_input("Cycles/week (dishwasher)", 0.0, 50.0, 1.0, key=f"{prefix}_dish_cycles")
+                st.number_input("L/cycle (dishwasher)", 0.0, 100.0, 1.0, key=f"{prefix}_dish_L")
 
     # 3) Optional
     with st.expander("Optional: usage + fractions + tariffs + emissions", expanded=False):
         oc1, oc2 = st.columns(2, gap="large")
 
         with oc1:
-            st.markdown('<div class="sec-h">Usage assumptions</div>', unsafe_allow_html=True)
-            st.number_input("Hot water setpoint (°C)", min_value=30.0, max_value=80.0, step=1.0, key=f"{prefix}_hotWater_setpoint_C", help=HELP["usage_general"])
-            st.number_input("Cold water inlet (°C)", min_value=0.0, max_value=30.0, step=1.0, key=f"{prefix}_coldWater_inlet_C", help=HELP["usage_general"])
-            st.number_input("Toilet flushes/person/day", min_value=0.0, max_value=20.0, step=0.5, key=f"{prefix}_toiletFlushes_ppd", help=HELP["usage_general"])
-            st.number_input("Showers/person/day", min_value=0.0, max_value=5.0, step=0.1, key=f"{prefix}_showers_ppd", help=HELP["usage_general"])
-            st.number_input("Minutes/shower", min_value=0.0, max_value=60.0, step=0.1, key=f"{prefix}_minutes_per_shower", help=HELP["usage_general"])
-            st.number_input("Tap minutes/person/day", min_value=0.0, max_value=120.0, step=0.5, key=f"{prefix}_tapMinutes_ppd", help=HELP["usage_general"])
+            st.markdown("**Usage assumptions**")
+            st.number_input("Hot water setpoint (°C)", 30.0, 80.0, 1.0, key=f"{prefix}_hotWater_setpoint_C", help=HELP["usage_general"])
+            st.number_input("Cold water inlet (°C)", 0.0, 30.0, 1.0, key=f"{prefix}_coldWater_inlet_C", help=HELP["usage_general"])
+            st.number_input("Toilet flushes/person/day", 0.0, 20.0, 0.5, key=f"{prefix}_toiletFlushes_ppd", help=HELP["usage_general"])
+            st.number_input("Showers/person/day", 0.0, 5.0, 0.1, key=f"{prefix}_showers_ppd", help=HELP["usage_general"])
+            st.number_input("Minutes/shower", 0.0, 60.0, 0.1, key=f"{prefix}_minutes_per_shower", help=HELP["usage_general"])
+            st.number_input("Tap minutes/person/day", 0.0, 120.0, 0.5, key=f"{prefix}_tapMinutes_ppd", help=HELP["usage_general"])
 
         with oc2:
-            st.markdown('<div class="sec-h">Hot water fractions</div>', unsafe_allow_html=True)
+            st.markdown("**Hot water fractions**")
             st.caption(HELP["hw_frac"])
             st.slider("Shower hot water fraction", 0.0, 1.0, step=0.05, key=f"{prefix}_hw_frac_shower")
             st.slider("Tap hot water fraction", 0.0, 1.0, step=0.05, key=f"{prefix}_hw_frac_tap")
@@ -1179,58 +1016,56 @@ def scenario_panel(prefix: str, title: str):
             st.slider("Dishwasher hot water fraction", 0.0, 1.0, step=0.05, key=f"{prefix}_hw_frac_dishwasher")
 
             st.divider()
-            st.markdown('<div class="sec-h">Tariffs + emission factors</div>', unsafe_allow_html=True)
-            st.number_input("Electricity tariff (NZD/kWh)", min_value=0.0, max_value=2.0, step=0.01, key=f"{prefix}_coef_elec_tariff", help=HELP["tariffs"])
-            st.number_input("Water tariff (NZD/m³)", min_value=0.0, max_value=20.0, step=0.1, key=f"{prefix}_coef_water_tariff", help=HELP["tariffs"])
-            st.number_input("Grid emission factor (kgCO₂e/kWh)", min_value=0.0, max_value=1.0, step=0.0001, key=f"{prefix}_coef_grid_ef", help=HELP["efs"])
-            st.number_input("Water emission factor (kgCO₂e/m³)", min_value=0.0, max_value=5.0, step=0.0001, key=f"{prefix}_coef_water_ef", help=HELP["efs"])
+            st.markdown("**Tariffs + emission factors**")
+            st.number_input("Electricity tariff (NZD/kWh)", 0.0, 2.0, 0.01, key=f"{prefix}_coef_elec_tariff", help=HELP["tariffs"])
+            st.number_input("Water tariff (NZD/m³)", 0.0, 20.0, 0.1, key=f"{prefix}_coef_water_tariff", help=HELP["tariffs"])
+            st.number_input("Grid emission factor (kgCO₂e/kWh)", 0.0, 1.0, 0.0001, key=f"{prefix}_coef_grid_ef", help=HELP["efs"])
+            st.number_input("Water emission factor (kgCO₂e/m³)", 0.0, 5.0, 0.0001, key=f"{prefix}_coef_water_ef", help=HELP["efs"])
 
 # =============================================================================
-# CARDS RENDERING
+# KPI RENDERING (NO CSS / NO HTML)
 # =============================================================================
-def render_metric_card(title: str, unit: str, base_val: str, imp_val: str, delta_val: str, delta_dir: str):
-    st.markdown(
-        f"""
-        <div class="kpi-card">
-          <div class="kpi-title">{title}</div>
-          <div class="kpi-sub">{unit}</div>
-          <div class="kpi-row"><div class="kpi-label">Base scenario</div><div class="kpi-val">{base_val}</div></div>
-          <div class="kpi-row"><div class="kpi-label">Improve scenario</div><div class="kpi-val">{imp_val}</div></div>
-          <div class="kpi-row"><div class="kpi-label">Δ (Improve − Base)</div><div class="kpi-val">{delta_dir} {delta_val}</div></div>
-        </div>
-        """,
-        unsafe_allow_html=True
-    )
+def kpi_box(title: str, unit: str, base: float, imp: float | None, decimals: int, lower_is_better: bool = True):
+    """
+    Old design: one box with Base, Improve, Δ rows.
+    New: use a bordered container + stacked st.metric cards inside.
+    """
+    delta = None if imp is None else (imp - base)
 
-def render_payback_card(pb_years: str, note: str | None = None):
-    note_html = f'<div class="kpi-note">{note}</div>' if note else ""
-    st.markdown(
-        f"""
-        <div class="kpi-card">
-          <div class="kpi-title">Simple payback years</div>
-          <div class="kpi-sub">years</div>
-          <div class="kpi-row"><div class="kpi-label">Payback</div><div class="kpi-val">{pb_years}</div></div>
-          {note_html}
-        </div>
-        """,
-        unsafe_allow_html=True
-    )
+    with container_box(border=True):
+        st.markdown(f"**{title}**")
+        st.caption(unit)
 
-def metric_vals(b_val: float | None, o_val: float | None, dec: int):
-    b_s = fmt_num(b_val, dec) if b_val is not None else "—"
-    o_s = fmt_num(o_val, dec) if o_val is not None else "—"
-    if (b_val is None) or (o_val is None):
-        return b_s, o_s, "—", "—"
-    d = o_val - b_val
-    return b_s, o_s, fmt_num(d, dec), direction_arrow(d)
+        # Base
+        metric_card("Base scenario", f"{fmt_num(base, decimals)}")
+
+        # Improve (+ delta arrow relative to base)
+        if imp is None:
+            metric_card("Improve scenario", "—")
+            metric_card("Δ (Improve − Base)", "—")
+        else:
+            # Show Improve with delta arrow. Use inverse so decreases are green (for 'lower is better').
+            # If this KPI is 'higher is better', set lower_is_better=False.
+            dc = "inverse" if lower_is_better else "normal"
+            metric_card("Improve scenario", f"{fmt_num(imp, decimals)}", delta=f"{fmt_num(delta, decimals)}", delta_color=dc)
+
+            # Also show explicit delta row (no arrow; arrow already in Improve row)
+            metric_card("Δ (Improve − Base)", f"{fmt_num(delta, decimals)}")
+
+def payback_box(pb_years: float | None, note: str | None):
+    with container_box(border=True):
+        st.markdown("**Simple payback years**")
+        st.caption("years")
+        metric_card("Payback", "—" if pb_years is None else fmt_num(pb_years, 1))
+        if note:
+            st.caption(note)
 
 # =============================================================================
-# CHARTS (consistent category order)
+# CHARTS
 # =============================================================================
 def plot_breakdown_stacked(title: str, y_title: str, categories: list[str], b_vals: list[float], o_vals: list[float] | None):
     x = ["Base"] + (["Improve"] if o_vals is not None else [])
     fig = go.Figure()
-
     for i, cat in enumerate(categories):
         y = [b_vals[i]] + ([o_vals[i]] if o_vals is not None else [])
         fig.add_trace(go.Bar(name=cat, x=x, y=y))
@@ -1298,20 +1133,20 @@ def plot_capex_breakdown(b_res: dict, o_res: dict | None):
     plot_breakdown_stacked("5) Capital cost breakdown (Base vs Improve)", "NZD", cats, b_vals, o_vals)
 
 # =============================================================================
-# WHAT CHANGED TABLE (below KPI, no title)
+# WHAT CHANGED TABLE
 # =============================================================================
-def scenario_changes_table(b_now: dict, o_now: dict) -> pd.DataFrame:
+def scenario_changes_table() -> pd.DataFrame:
     rows = []
 
     def add(label: str, b_val, o_val):
         if b_val != o_val:
             rows.append([label, b_val, o_val])
 
-    add("Closest city", b_now.get("closestCity"), o_now.get("closestCity"))
-    add("Roof insulation (label)", st.session_state.get("b_roofRLabel"), st.session_state.get("o_roofRLabel"))
-    add("Wall insulation (label)", st.session_state.get("b_wallRLabel"), st.session_state.get("o_wallRLabel"))
-    add("Floor insulation (label)", st.session_state.get("b_floorRLabel"), st.session_state.get("o_floorRLabel"))
-    add("Window type (label)", st.session_state.get("b_windowULabel"), st.session_state.get("o_windowULabel"))
+    add("Closest city", st.session_state.get("b_closestCity"), st.session_state.get("o_closestCity"))
+    add("Roof insulation", st.session_state.get("b_roofRLabel"), st.session_state.get("o_roofRLabel"))
+    add("Wall insulation", st.session_state.get("b_wallRLabel"), st.session_state.get("o_wallRLabel"))
+    add("Floor insulation", st.session_state.get("b_floorRLabel"), st.session_state.get("o_floorRLabel"))
+    add("Window type", st.session_state.get("b_windowULabel"), st.session_state.get("o_windowULabel"))
     add("Space heating system", st.session_state.get("b_spaceHeatingSystem"), st.session_state.get("o_spaceHeatingSystem"))
     add("Water heating system", st.session_state.get("b_waterHeatingSystem"), st.session_state.get("o_waterHeatingSystem"))
     add("Toilet type", st.session_state.get("b_toiletType"), st.session_state.get("o_toiletType"))
@@ -1320,15 +1155,14 @@ def scenario_changes_table(b_now: dict, o_now: dict) -> pd.DataFrame:
     add("Has washing machine?", st.session_state.get("b_wash_has"), st.session_state.get("o_wash_has"))
     add("Has dishwasher?", st.session_state.get("b_dish_has"), st.session_state.get("o_dish_has"))
 
-    df = pd.DataFrame(rows, columns=["Changed item", "Base scenario", "Improve scenario"])
-    return df
+    return pd.DataFrame(rows, columns=["Changed item", "Base scenario", "Improve scenario"])
 
 # =============================================================================
 # APP START
 # =============================================================================
 init_defaults()
 
-# If base is ready and improve unlocked but not seeded yet -> seed once
+# Seed improve once when unlocked
 if st.session_state.get("base_ready", False) and st.session_state.get("improve_unlocked", False) and not st.session_state.get("improve_seeded", False):
     seed_improve_from_base_once()
 
@@ -1352,20 +1186,14 @@ with st.expander("Quick start guide", expanded=False):
         """
 **What this tool does (early-stage):**
 - Estimates annual **electricity** (space heating + hot water + lighting), **indoor water**, **operational carbon**, **operating cost**, and transparent **capex**.
-- Space heating uses a steady-state heat-loss approach (HLC / H_total × HDD). Defaults aligned to MBIE/BRANZ-style early-stage banding.
 - This is decision support, not certification and not a full simulation.
 
-**How to use (recommended flow):**
+**Recommended flow:**
 1. Fill **Base scenario** inputs (Core + Envelope/Systems/Water).
-2. Click **Calculate Base scenario** to lock-in and unlock Improve scenario.
-3. Improve scenario auto-copies the Base scenario. Change what you want to improve.
+2. Click **Calculate Base scenario** to unlock Improve scenario.
+3. Improve scenario auto-copies Base. Change what you want.
 4. Click **Compare scenarios**.
-5. After compare is activated, editing inputs updates results live.
-
-**Where to find documentation:**
-- **Calculator** tab: inputs + results + charts
-- **Formulas** tab: model equations / methods
-- **Data sources** tab: provenance / default values
+5. Once comparison is active, editing inputs updates results live.
         """
     )
 
@@ -1390,22 +1218,16 @@ with tab_calc:
         st.session_state["compare_ready"] = True
 
     with left:
-        try:
-            input_box = st.container(height=INPUT_H, border=True)
-        except TypeError:
-            input_box = st.container()
-
-        with input_box:
+        with container_box(height=INPUT_H, border=True):
             scenario_panel("b", "Base scenario")
 
             if st.session_state.get("improve_unlocked", False):
                 st.divider()
                 scenario_panel("o", "Improve scenario")
 
-        # Sticky action bar
-        st.markdown('<div class="fixed-bar">', unsafe_allow_html=True)
+        st.divider()
 
-        # Stage indicator copy
+        # Guidance + actions (no sticky bar)
         if not st.session_state.get("base_ready", False):
             st.info("Step 1/3: Fill the Base scenario form, then calculate.")
         elif st.session_state.get("base_ready", False) and not st.session_state.get("compare_ready", False):
@@ -1413,46 +1235,33 @@ with tab_calc:
         else:
             st.success("Step 3/3: Comparison is active. Adjust inputs to explore trade-offs.")
 
-        # Base action
         b_now = get_scenario("b")
         missing_b = validate_scenario(b_now)
-        disabled_base = bool(missing_b)
-
         st.button(
             "Calculate Base scenario",
             use_container_width=True,
-            disabled=disabled_base,
+            disabled=bool(missing_b),
             key="btn_calc_base",
             on_click=on_calc_base,
         )
-        if disabled_base:
+        if missing_b:
             st.caption("To calculate, complete: " + ", ".join(missing_b))
 
-        # Compare action
         if st.session_state.get("improve_unlocked", False):
             o_now = get_scenario("o")
             missing_o = validate_scenario(o_now)
-            disabled_compare = bool(missing_o)
-
             st.button(
                 "Compare scenarios",
                 use_container_width=True,
-                disabled=disabled_compare,
+                disabled=bool(missing_o),
                 key="btn_compare",
                 on_click=on_compare,
             )
-            if disabled_compare:
-                st.caption("Complete the Improve scenario form to compare two results: " + ", ".join(missing_o))
-
-        st.markdown("</div>", unsafe_allow_html=True)
+            if missing_o:
+                st.caption("To compare, complete: " + ", ".join(missing_o))
 
     with right:
-        try:
-            results_box = st.container(height=RESULTS_H, border=True)
-        except TypeError:
-            results_box = st.container()
-
-        with results_box:
+        with container_box(height=RESULTS_H, border=True):
             st.subheader("Results")
 
             b_res = None
@@ -1487,50 +1296,47 @@ with tab_calc:
                 imp_opex = o_res["opex"]["opex_total_nzd_y"] if o_res else None
                 imp_capex = o_res["capex"]["capex_total_nzd"] if o_res else None
 
-                b_s, o_s, d_s, d_dir = metric_vals(base_energy, imp_energy, 1)
-                b_w, o_w, d_w, d_dir_w = metric_vals(base_water, imp_water, 2)
-                b_c, o_c, d_c, d_dir_c = metric_vals(base_carbon, imp_carbon, 1)
-                b_op, o_op, d_op, d_dir_op = metric_vals(base_opex, imp_opex, 0)
-                b_cap, o_cap, d_cap, d_dir_cap = metric_vals(base_capex, imp_capex, 0)
-
-                pb_years = "—"
+                # Payback
+                pb_years = None
                 pb_note = None
                 if o_res is not None:
                     inc_capex = imp_capex - base_capex
                     savings = base_opex - imp_opex
                     if inc_capex <= 0:
-                        pb_years = "0.0"
+                        pb_years = 0.0
                         pb_note = "No additional capex (improve ≤ base capex)."
                     elif savings <= 0:
-                        pb_years = "—"
+                        pb_years = None
                         pb_note = "No payback (annual savings ≤ 0)."
                     else:
-                        pb_years = fmt_num(inc_capex / savings, 1)
+                        pb_years = inc_capex / savings
                         pb_note = "Payback = (Capex increase) ÷ (Annual opex savings)."
 
+                # KPI grid (2 columns like your old screenshot)
                 c1, c2 = st.columns(2, gap="small")
                 with c1:
-                    render_metric_card("Total energy use", "kWh/year", b_s, o_s, d_s, d_dir)
+                    kpi_box("Total energy use", "kWh/year", base_energy, imp_energy, decimals=1, lower_is_better=True)
                 with c2:
-                    render_metric_card("Total water use", "m³/year", b_w, o_w, d_w, d_dir_w)
+                    kpi_box("Total water use", "m³/year", base_water, imp_water, decimals=2, lower_is_better=True)
 
                 c1, c2 = st.columns(2, gap="small")
                 with c1:
-                    render_metric_card("Operational carbon", "kgCO₂e/year", b_c, o_c, d_c, d_dir_c)
+                    kpi_box("Operational carbon", "kgCO₂e/year", base_carbon, imp_carbon, decimals=1, lower_is_better=True)
                 with c2:
-                    render_metric_card("Operating cost", "NZD/year", b_op, o_op, d_op, d_dir_op)
+                    kpi_box("Operating cost", "NZD/year", base_opex, imp_opex, decimals=0, lower_is_better=True)
 
                 c1, c2 = st.columns(2, gap="small")
                 with c1:
-                    render_metric_card("Capital cost", "NZD", b_cap, o_cap, d_cap, d_dir_cap)
+                    # Capital cost: higher is worse in your UX, so treat lower_is_better=True
+                    kpi_box("Capital cost", "NZD", base_capex, imp_capex, decimals=0, lower_is_better=True)
                 with c2:
-                    render_payback_card(pb_years, pb_note)
+                    payback_box(pb_years, pb_note)
 
-                # What changed (below KPI, no title)
+                # What changed
                 if st.session_state.get("compare_ready", False) and o_res is not None:
-                    changes_df = scenario_changes_table(b_now, o_now)
-                    if not changes_df.empty:
-                        st.dataframe(changes_df, use_container_width=True, hide_index=True)
+                    df_changes = scenario_changes_table()
+                    if not df_changes.empty:
+                        st.dataframe(df_changes, use_container_width=True, hide_index=True)
 
                 st.divider()
                 st.markdown("### Charts (Base vs Improve)")
@@ -1588,59 +1394,38 @@ It also calculates indoor water end-uses, hot-water energy using ΔT and Cp, ope
 ---
 
 ### 1. Energy Consumption
+**Total Energy (kWh/year) = Space Heating + Water Heating + Lighting**
 
-**1.1 Total Energy**  
-Total Energy (kWh/year) = Space Heating + Water Heating + Lighting
+**Space Heating Electricity (kWh/year)**  
+(H_total × HDD × 24 / 1000) ÷ COP
 
----
+H_total (W/K) = H_floor + H_roof + H_wall + H_window  
+- H_floor = floorArea × (1 / floorR)  
+- H_roof = roofArea × (1 / roofR)  
+- H_wall = wallArea × (1 / wallR), where wallArea ≈ (4 × sqrt(floorArea) × ceilingHeight) − windowArea  
+- H_window = windowArea × windowU  
 
-### 1.2 Space Heating Electricity  
-Space Heating Electricity (kWh/year) = (H_total × HDD × 24 / 1000) ÷ COP
+**Water Heating Delivered (kWh/year)**  
+(V_hotwater_annual × ΔT × Cp) ÷ 3600  
+Purchased = Delivered ÷ COP
 
-H_total (W/K) = H_floor + H_roof + H_wall + H_window
-
-- H_floor = floorArea × (1 / floorR)
-- H_roof = roofArea × (1 / roofR)
-- H_wall = wallArea × (1 / wallR), where wallArea ≈ (4 × sqrt(floorArea) × ceilingHeight) − windowArea
-- H_window = windowArea × windowU
-
----
-
-### 1.3 Water Heating Electricity  
-Water Heating Electricity (kWh/year) = Water Heating Delivered ÷ COP
-
-Water Heating Delivered (kWh/year) = (V_hotwater_annual × ΔT × Cp) ÷ 3600
-
-- ΔT (°C) = hotWater_setpoint − coldWater_inlet  
-- Cp = 4.186 (kJ/kg·°C)  
-- 3600 converts kJ → kWh
-
-V_hotwater_annual (L/year) =
-(V_shower × hot_share_shower)
-+ (V_tap × hot_share_tap)
-+ (V_laundry × hot_share_laundry)
-+ (V_dishwasher × hot_share_dishwasher)
+**Lighting (kWh/year)**  
+(numberOfLights × wattsPerLight × hoursPerDay × 365) ÷ 1000
 
 ---
 
-### 1.4 Lighting Electricity  
-Lighting (kWh/year) = (numberOfLights × wattsPerLight × hoursPerDay × 365) ÷ 1000
-
----
-
-## 2. Water Consumption  
+### 2. Water Consumption  
 Water (m³/year) = (V_toilet + V_shower + V_tap + V_laundry + V_dishwasher) ÷ 1000
 
 ---
 
-## 3. Operational Carbon  
+### 3. Operational Carbon  
 CO₂e (kg/year) = (Electricity kWh × grid factor) + (Water m³ × water factor)
 
 ---
 
-## 4. Financial  
-Opex (NZD/year) = (Electricity kWh × electricity tariff) + (Water m³ × water tariff)
-
+### 4. Financial  
+Opex (NZD/year) = (Electricity kWh × electricity tariff) + (Water m³ × water tariff)  
 Payback (years) = (Capex increase) ÷ (Annual opex savings)
         """
     )
@@ -1650,7 +1435,6 @@ Payback (years) = (Capex increase) ÷ (Annual opex savings)
 # =============================================================================
 with tab_sources:
     st.header("Data sources")
-
     rows = [
         [1,"Energy","Space Heating Energy","Electricity for space heating","Calculated","(H_total × HDD × 24 / 1000) ÷ COP","MBIE (2023)","Steady-state early-stage method"],
         [2,"Energy","Heating Degree Days (HDD)","Climate severity (base 18 °C)","Lookup / User","Zone bands + Custom","InfraComfort (n.d.); MSD (2006)","City → climate zone"],
