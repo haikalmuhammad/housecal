@@ -1000,7 +1000,21 @@ def scenario_panel(prefix: str, title: str):
 
         with oc1:
             st.markdown("**Usage assumptions**")
-            st.number_input("Hot water setpoint (°C)", 30.0, 80.0, 1.0, key=f"{prefix}_hotWater_setpoint_C", help=HELP["usage_general"])
+
+            # FIX: don't pass 1.0 as "value" below min. Use explicit value+step.
+            _hw_default = float(LOOKUP["defaults"]["usage"]["hotWater_setpoint_C"])
+            _hw_value = float(st.session_state.get(f"{prefix}_hotWater_setpoint_C", _hw_default))
+            _hw_value = _clamp(_hw_value, 30.0, 80.0)
+            st.number_input(
+                "Hot water setpoint (°C)",
+                min_value=30.0,
+                max_value=80.0,
+                value=_hw_value,
+                step=1.0,
+                key=f"{prefix}_hotWater_setpoint_C",
+                help=HELP["usage_general"],
+            )
+
             st.number_input("Cold water inlet (°C)", 0.0, 30.0, 1.0, key=f"{prefix}_coldWater_inlet_C", help=HELP["usage_general"])
             st.number_input("Toilet flushes/person/day", 0.0, 20.0, 0.5, key=f"{prefix}_toiletFlushes_ppd", help=HELP["usage_general"])
             st.number_input("Showers/person/day", 0.0, 5.0, 0.1, key=f"{prefix}_showers_ppd", help=HELP["usage_general"])
@@ -1026,30 +1040,20 @@ def scenario_panel(prefix: str, title: str):
 # KPI RENDERING (NO CSS / NO HTML)
 # =============================================================================
 def kpi_box(title: str, unit: str, base: float, imp: float | None, decimals: int, lower_is_better: bool = True):
-    """
-    Old design: one box with Base, Improve, Δ rows.
-    New: use a bordered container + stacked st.metric cards inside.
-    """
     delta = None if imp is None else (imp - base)
 
     with container_box(border=True):
         st.markdown(f"**{title}**")
         st.caption(unit)
 
-        # Base
         metric_card("Base scenario", f"{fmt_num(base, decimals)}")
 
-        # Improve (+ delta arrow relative to base)
         if imp is None:
             metric_card("Improve scenario", "—")
             metric_card("Δ (Improve − Base)", "—")
         else:
-            # Show Improve with delta arrow. Use inverse so decreases are green (for 'lower is better').
-            # If this KPI is 'higher is better', set lower_is_better=False.
             dc = "inverse" if lower_is_better else "normal"
             metric_card("Improve scenario", f"{fmt_num(imp, decimals)}", delta=f"{fmt_num(delta, decimals)}", delta_color=dc)
-
-            # Also show explicit delta row (no arrow; arrow already in Improve row)
             metric_card("Δ (Improve − Base)", f"{fmt_num(delta, decimals)}")
 
 def payback_box(pb_years: float | None, note: str | None):
@@ -1227,7 +1231,6 @@ with tab_calc:
 
         st.divider()
 
-        # Guidance + actions (no sticky bar)
         if not st.session_state.get("base_ready", False):
             st.info("Step 1/3: Fill the Base scenario form, then calculate.")
         elif st.session_state.get("base_ready", False) and not st.session_state.get("compare_ready", False):
@@ -1296,7 +1299,6 @@ with tab_calc:
                 imp_opex = o_res["opex"]["opex_total_nzd_y"] if o_res else None
                 imp_capex = o_res["capex"]["capex_total_nzd"] if o_res else None
 
-                # Payback
                 pb_years = None
                 pb_note = None
                 if o_res is not None:
@@ -1312,7 +1314,6 @@ with tab_calc:
                         pb_years = inc_capex / savings
                         pb_note = "Payback = (Capex increase) ÷ (Annual opex savings)."
 
-                # KPI grid (2 columns like your old screenshot)
                 c1, c2 = st.columns(2, gap="small")
                 with c1:
                     kpi_box("Total energy use", "kWh/year", base_energy, imp_energy, decimals=1, lower_is_better=True)
@@ -1327,12 +1328,10 @@ with tab_calc:
 
                 c1, c2 = st.columns(2, gap="small")
                 with c1:
-                    # Capital cost: higher is worse in your UX, so treat lower_is_better=True
                     kpi_box("Capital cost", "NZD", base_capex, imp_capex, decimals=0, lower_is_better=True)
                 with c2:
                     payback_box(pb_years, pb_note)
 
-                # What changed
                 if st.session_state.get("compare_ready", False) and o_res is not None:
                     df_changes = scenario_changes_table()
                     if not df_changes.empty:
