@@ -1662,120 +1662,183 @@ with tab_calculators:
 # TAB 3: FORMULAS
 # =============================================================================
 with tab_formulas:
-    st.header("Formulas")
+    st.header("Formulas (narrative)")
+
     st.markdown(
         """
-### Notation
-- **Area** in m²  
-- **R-value** in m²·K/W  
-- **U-value** in W/m²·K  (U = 1/R)  
-- **HDD** in degree-days/year (base 18°C)  
-- **COP** dimensionless  
-- **HLC (H_total)** in W/K  
+## Why this prototype uses a Heat Loss Coefficient (HLC)
+
+This prototype estimates space-heating energy using a **steady-state heat-loss** approach that is commonly used for **early-stage design**.  
+At the centre of this approach is the **Heat Loss Coefficient (HLC)**, sometimes written as **H_total** (units: **W/K**).
+
+**Interpretation:**  
+- **HLC tells you how “leaky” the building is thermally.**  
+- If **HLC = 200 W/K**, then for every **1°C** temperature difference between inside and outside, the building loses about **200 W** of heat (before accounting for system efficiency).
+
+HLC-based methods are widely used as simplified inputs to energy calculations and are aligned with building-physics conventions (e.g., ISO-based methods) and NZ guidance for energy-efficiency compliance and modelling contexts. See Further reading below.
 
 ---
 
-### 1) Heat Loss Coefficient (HLC)
-**HLC (W/K) = Σ( Aᵢ × Uᵢ )**
+## Step-by-step overview of what we compute
+
+### 1) Geometry (simplified)
+We approximate key surface areas from user inputs:
+
+- **Roof area (m²)** ≈ floorArea  
+- **Perimeter (m)** ≈ 4 × sqrt(floorArea)  
+- **Gross wall area (m²)** ≈ perimeter × ceilingHeight  
+- **Net wall area (m²)** ≈ gross wall area − windowArea  
+- **Floor area (m²)** ≈ floorArea  
+- **Window area (m²)** ≈ windowArea
+
+> Note: This is a simplification for early-stage use (not a detailed take-off).
+
+---
+
+## 2) Space heating electricity (kWh/year)
+
+### 2.1 Heat loss coefficient (HLC / H_total)
+We calculate:
+
+**H_total (W/K) = H_roof + H_wall + H_floor + H_window**
+
+Each term uses **Area × U-value**:
+
+- **H_roof = A_roof × U_roof**
+- **H_wall = A_wall × U_wall**
+- **H_floor = A_floor × U_floor**
+- **H_window = A_window × U_window**
 
 Where:
-- Roof: **H_roof = A_roof × (1 / R_roof)**
-- Walls: **H_wall = A_wall × (1 / R_wall)**
-- Floor: **H_floor = A_floor × (1 / R_floor)**
-- Windows: **H_window = A_window × U_window**
+- **U_roof = 1 / R_roof**
+- **U_wall = 1 / R_wall**
+- **U_floor = 1 / R_floor**
+- **U_window** is selected directly (W/m²K)
 
-So:
-**HLC = H_roof + H_wall + H_floor + H_window**
+**Units check:**  
+Area (m²) × U (W/m²K) = W/K
 
-**Geometry used (early-stage approximation):**
-- **A_roof = floorArea**
-- **Perimeter ≈ 4 × √(floorArea)**
-- **A_wall ≈ (Perimeter × ceilingHeight) − windowArea**
-- **A_floor = floorArea**
-- **A_window = windowArea**
+### 2.2 Annual delivered heat (steady-state degree-day method)
+We use Heating Degree Days (HDD, base 18°C) to convert H_total into annual heat demand:
 
----
-
-### 2) Annual Space Heating Electricity
-Delivered annual space-heating energy (kWh/year):
-**Q_delivered = (HLC × HDD × 24) / 1000**
-
-Purchased electricity (kWh/year):
-**Q_purchased = Q_delivered / COP**
-
----
-
-### 3) Indoor Water Consumption
-Annual volumes (L/year):
-- **V_toilet = people × flushes/person/day × L/flush × 365**
-- **V_shower = people × showers/person/day × minutes/shower × L/min × 365**
-- **V_tap = people × tapMinutes/person/day × L/min × 365**
-- **V_laundry = cycles/week × L/cycle × 52** (if included)
-- **V_dishwasher = cycles/week × L/cycle × 52** (if included)
-
-Total indoor water (m³/year):
-**V_total_m3 = (V_toilet + V_shower + V_tap + V_laundry + V_dishwasher) / 1000**
-
----
-
-### 4) Water Heating Electricity (derived from end-uses)
-Hot-water volume (L/year):
-**V_hot = V_shower×f_shower + V_tap×f_tap + V_laundry×f_laundry + V_dishwasher×f_dishwasher**
-
-Temperature rise:
-**ΔT = T_hot_setpoint − T_cold_inlet**
-
-Delivered energy (kWh/year):
-**Q_hot_delivered = (V_hot × Cp × ΔT) / 3600**
+**Q_delivered (kWh/year) = (H_total × HDD × 24) / 1000**
 
 Where:
-- Cp = 4.186 kJ/kg·°C (≈ kJ/L·°C for water)
+- H_total is in W/K  
+- HDD is in K·days/year (degree-days)  
+- 24 converts days → hours  
+- /1000 converts Wh → kWh
 
-Purchased electricity (kWh/year):
-**Q_hot_purchased = Q_hot_delivered / COP**
+### 2.3 Purchased electricity (system efficiency via COP)
+We then account for heating system efficiency using **COP**:
 
----
+**Q_purchased (kWh/year) = Q_delivered / COP**
 
-### 5) Lighting Electricity
-**Q_lighting = (numberOfLights × wattsPerLight × hoursPerDay × 365) / 1000**
-
----
-
-### 6) Total Electricity (Operational)
-**Q_total_electricity = Q_space_purchased + Q_hot_purchased + Q_lighting**
+- COP = 1 for resistive electric heating  
+- COP > 1 for heat pumps
 
 ---
 
-### 7) Operational Carbon
-**CO2_total = (Q_total_electricity × EF_grid) + (V_total_m3 × EF_water)**
+## 3) Hot water, water use, and water-heating electricity
+
+### 3.1 Indoor water end-uses (m³/year)
+We compute annual volumes for:
+- Toilets
+- Showers
+- Taps
+- Laundry (optional)
+- Dishwasher (optional)
+
+Example patterns (units shown):
+- Toilets (L/year) = householdSize × flushes/person/day × L/flush × 365  
+- Showers (L/year) = householdSize × showers/person/day × minutes/shower × L/min × 365  
+- Taps (L/year) = householdSize × tapMinutes/person/day × L/min × 365  
+- Appliances use cycles/week × L/cycle × 52 (if enabled)
+
+Convert to m³/year:
+
+**V_total (m³/year) = V_total(L/year) / 1000**
+
+### 3.2 Hot water volume (L/year)
+To estimate water-heating energy, we first estimate the **hot-water share** of end-uses:
+
+**V_hot (L/year) =**
+- Showers × hotWaterFraction_shower  
++ Taps × hotWaterFraction_tap  
++ Laundry × hotWaterFraction_laundry  
++ Dishwasher × hotWaterFraction_dishwasher
+
+> Toilets are treated as **cold water only** in this prototype.
+
+### 3.3 Water-heating delivered energy (kWh/year)
+We estimate thermal energy needed to raise water temperature:
+
+**Q_hw_delivered (kWh/year) = (V_hot × Cp × ΔT) / 3600**
+
+Where:
+- V_hot in litres (≈ kg of water)
+- Cp = 4.186 kJ/kg°C  
+- ΔT = hotWaterSetpoint − coldWaterInlet (°C)  
+- /3600 converts kJ → kWh
+
+### 3.4 Purchased electricity for water heating
+**Q_hw_purchased (kWh/year) = Q_hw_delivered / COP_water**
 
 ---
 
-### 8) Operating Cost (Opex)
-**Opex_total = (Q_total_electricity × tariff_elec) + (V_total_m3 × tariff_water)**
+## 4) Lighting electricity (kWh/year)
+
+**Q_lighting (kWh/year) = (numberOfLights × wattsPerLight × hoursPerDay × 365) / 1000**
 
 ---
 
-### 9) Capital Cost (Capex)
-Envelope capex (NZD):
-**Capex_env = (A_roof×c_roof) + (A_wall×c_wall) + (A_floor×c_floor) + (A_window×c_window)**
+## 5) Totals (energy, carbon, cost)
 
-Systems + fixtures capex are added as lump sums:
-**Capex_total = Capex_env + Capex_systems + Capex_fixtures**
+### 5.1 Total electricity
+**Electricity_total = SpaceHeating_purchased + WaterHeating_purchased + Lighting**
+
+### 5.2 Operational carbon (kgCO₂e/year)
+**CO₂e_total = (Electricity_total × gridEF) + (Water_total_m³ × waterEF)**
+
+### 5.3 Operating cost (NZD/year)
+**Opex_total = (Electricity_total × electricityTariff) + (Water_total_m³ × waterTariff)**
 
 ---
 
-### 10) Simple Payback (years)
-Let:
-- **ΔCapex = Capex_improve − Capex_base**
-- **ΔOpex = Opex_base − Opex_improve** (savings)
+## 6) Capex and payback (simple)
 
-Then:
-- If ΔCapex ≤ 0 → Payback = 0 (no additional capex)
-- If ΔOpex ≤ 0 → No payback
-- Else **Payback = ΔCapex / ΔOpex**
+### 6.1 Capex (NZD)
+Capex is estimated as transparent unit-cost accounting:
+
+- Envelope capex = Σ (area × capex_per_m²)  
+- Systems capex = install_cost_space + install_cost_water  
+- Fixtures capex = toilet + shower + tap install costs
+
+### 6.2 Simple payback (years)
+If Improve is compared to Base:
+
+- **Capex_increase = Capex_improve − Capex_base**
+- **Annual_savings = Opex_base − Opex_improve**
+- **Payback = Capex_increase / Annual_savings** (when both are positive)
+
+---
+
+## Important limitations (interpretation guidance)
+
+- This is **not** a full building energy simulation (no hourly dynamics, solar gains, thermal mass, ventilation infiltration modelling, etc.).
+- Results are best used for **relative comparison** (Base vs Improve) under the same modelling assumptions.
+- Geometry is simplified; detailed design-stage take-offs will change envelope areas and therefore HLC and energy.
+
+---
+
+## Further reading (recommended)
+- **MBIE Building Code compliance guidance (H1 Energy efficiency / Acceptable Solution H1/AS1)** for NZ context and compliance framing.  
+- **NZGBC Homestar technical documentation (e.g., ECCHO / calculation approach references)** for Homestar-adjacent modelling logic and context.  
+- **ISO building-energy methods** (e.g., ISO 13790 legacy references and newer ISO 52016 family) for the broader standardised energy modelling framework.
+
         """
     )
+
 
 # =============================================================================
 # TAB 4: DATA SOURCES
