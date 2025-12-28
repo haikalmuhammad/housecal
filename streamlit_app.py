@@ -755,9 +755,12 @@ def resolve_hdd(prefix: str) -> float | None:
     return float(LOOKUP["climate"]["hdd_by_zone_base18"][zone])
 
 def invalidate_compare():
-    # Strict stage-by-stage: any edit returns to Stage 2 until user presses Calculate again.
+    # If Stage 3 active, keep it active (auto-refresh happens via Streamlit rerun anyway)
     if st.session_state.get("compare_ready", False):
-        st.session_state["compare_ready"] = False
+        return
+    # If Stage 3 not active yet, no need to change flags either.
+    return
+
 
 # =============================================================================
 # SCENARIO BUILD / VALIDATION
